@@ -17,6 +17,24 @@ local function MakeSlotButton(parent)
     button:SetAttribute("type2", "item")
     button:SetScript("PreClick", function(self, mouse, down)
         if mouse == "LeftButton" and not down and self.bag then Container.PickupContainerItem(self.bag, self.slot) end
+        -- The secure "use item" action equips bags and gear at a vendor instead of selling them. At a vendor the game's
+        -- own bags call UseContainerItem, which sells, so do that: the secure action is switched off for this click
+        -- and the sale is made once, when the button comes back up.
+        if mouse == "RightButton" and self.bag and MerchantFrame and MerchantFrame:IsShown()
+            and not (InCombatLockdown and InCombatLockdown()) then
+            self:SetAttribute("type2", nil)
+            self.selling = true
+            if not down then
+                local use = (C_Container and C_Container.UseContainerItem) or UseContainerItem
+                if use then use(self.bag, self.slot) end
+            end
+        end
+    end)
+    button:SetScript("PostClick", function(self)
+        if self.selling then
+            self.selling = nil
+            self:SetAttribute("type2", "item")
+        end
     end)
     button:SetScript("OnDragStart", function(self)
         if self.bag and not (CursorHasItem and CursorHasItem()) then Container.PickupContainerItem(self.bag, self.slot) end
