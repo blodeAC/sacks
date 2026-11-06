@@ -46,7 +46,7 @@ local function BuildSettings()
     window.tabs = {}
     local previous
     for _, tab in ipairs({ { "sacks", "Sacks" }, { "items", "Items" }, { "layout", "Layout" } }) do
-        local button = MakeButton(window, tab[2], 90, function() ShowTab(tab[1]) end)
+        local button = MakeButton(window, tab[2], nil, function() ShowTab(tab[1]) end)
         if previous then
             button:SetPoint("LEFT", previous, "RIGHT", SLOT_GAP, 0)
         else

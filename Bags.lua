@@ -17,6 +17,39 @@ local function BitAnd(a, b)
     return result
 end
 
+-- The text of an item's tooltip, as one string: what the game's item info leaves out (a drink restores mana, a bandage
+-- heals, and so on). Read from the game's tooltip data where it has it, otherwise from a hidden tooltip.
+local scanTip
+local function ReadTooltip(bag, slot)
+    local lines = {}
+    if C_TooltipInfo and C_TooltipInfo.GetBagItem then
+        local ok, data = pcall(C_TooltipInfo.GetBagItem, bag, slot)
+        if ok and type(data) == "table" then
+            for _, line in ipairs(data.lines or {}) do
+                if type(line.leftText) == "string" then lines[#lines + 1] = line.leftText end
+                if type(line.rightText) == "string" then lines[#lines + 1] = line.rightText end
+            end
+        end
+    elseif CreateFrame then
+        pcall(function()
+            scanTip = scanTip or CreateFrame("GameTooltip", "SacksScanTooltip", nil, "GameTooltipTemplate")
+            scanTip:SetOwner(UIParent, "ANCHOR_NONE")
+            scanTip:ClearLines()
+            scanTip:SetBagItem(bag, slot)
+            local count = scanTip:NumLines()
+            if type(count) ~= "number" then return end
+            for index = 1, count do
+                for _, side in ipairs({ "Left", "Right" }) do
+                    local text = _G["SacksScanTooltipText" .. side .. index]
+                    local value = text and text:GetText()
+                    if type(value) == "string" then lines[#lines + 1] = value end
+                end
+            end
+        end)
+    end
+    return #lines > 0 and table.concat(lines, "\n") or nil
+end
+
 local function ReadSlot(bag, slot)
     local info = Container.GetContainerItemInfo(bag, slot)
     if info == nil then return nil end
@@ -43,6 +76,15 @@ local function ReadSlot(bag, slot)
     entry.quality = entry.quality or 0
     local family = GetItemFamily or (C_Item and C_Item.GetItemFamily)
     entry.family = family and tonumber(family(entry.link or entry.itemID)) or 0
+    -- Tooltip text is read once per kind of item and kept (also in the saved list of items seen). If the game hasn't
+    -- got the text yet it stays empty and is tried again the next time the bags are read.
+    state.tips = state.tips or {}
+    local seen = SacksDB and SacksDB.seen and SacksDB.seen[entry.itemID]
+    entry.tip = state.tips[entry.itemID] or (seen and seen.tip)
+    if not entry.tip then
+        entry.tip = ReadTooltip(bag, slot)
+        if entry.tip then state.tips[entry.itemID] = entry.tip end
+    end
     return entry
 end
 

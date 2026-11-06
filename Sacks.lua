@@ -1,6 +1,8 @@
 -- sacks: Sacks.lua
 local _, ns = ...
+local STATS, Stat = ns.STATS, ns.Stat
 local AllGroups, Container, DEFAULT_ANCHOR, DEFAULT_COLUMNS, DEFAULT_FLOW, DEFAULT_SORT = ns.AllGroups, ns.Container, ns.DEFAULT_ANCHOR, ns.DEFAULT_COLUMNS, ns.DEFAULT_FLOW, ns.DEFAULT_SORT
+local IsBlankLine = ns.IsBlankLine
 local DEFAULT_TITLE, FindGroup, LastBag, Matches, PADDING, ReadBags = ns.DEFAULT_TITLE, ns.FindGroup, ns.LastBag, ns.Matches, ns.PADDING, ns.ReadBags
 local SLOT_GAP, SlotSize, TITLE_HEIGHT, state = ns.SLOT_GAP, ns.SlotSize, ns.TITLE_HEIGHT, ns.state
 
@@ -8,15 +10,91 @@ local SLOT_GAP, SlotSize, TITLE_HEIGHT, state = ns.SLOT_GAP, ns.SlotSize, ns.TIT
 -- Drawing
 ---------------------------------------------------------------------------------------------------
 
+-- The window the sacks line up beside while it is open: the vendor's, or the bank's.
+local function DockFrame()
+    if state.vendor and MerchantFrame then return MerchantFrame end
+    if state.bank and BankFrame then return BankFrame end
+end
+
+-- Some windows have tabs or buttons that stick out past their right edge (the bank's chest button). The sacks go
+-- beyond whatever sticks out the furthest, so they never cover it. Looked up each time the sacks are placed.
+local function Overhang(window)
+    if not (window.GetRight and window.GetChildren) then return 0 end
+    local right = window:GetRight()
+    local scale = window.GetEffectiveScale and window:GetEffectiveScale()
+    if type(right) ~= "number" or type(scale) ~= "number" or scale == 0 then return 0 end
+    local widest = 0
+    local function scan(parent, depth)
+        for _, child in ipairs({ parent:GetChildren() }) do
+            if type(child) == "table" and child.IsShown and child:IsShown() and child.GetRight then
+                local edge = child:GetRight()
+                local childScale = child.GetEffectiveScale and child:GetEffectiveScale()
+                if type(edge) == "number" and type(childScale) == "number" then
+                    local over = edge * childScale / scale - right
+                    if over > widest then widest = over end
+                end
+                if depth < 3 and child.GetChildren then scan(child, depth + 1) end
+            end
+        end
+    end
+    scan(window, 1)
+    -- nothing that is a tab or button sticks out further than the window is wide
+    local width = window.GetWidth and window:GetWidth()
+    return type(width) == "number" and width > 0 and math.min(widest, width) or widest
+end
+
+-- Shows the item's cooldown (potions, hearthstone, trinkets) on its slot, as the game's own bags do.
+local function UpdateCooldown(button)
+    local cooldown = button.cooldown
+    if not cooldown then return end
+    local get = (C_Container and C_Container.GetContainerItemCooldown) or GetContainerItemCooldown
+    local start, duration, enable = 0, 0, 0
+    if button.bag and get then start, duration, enable = get(button.bag, button.slot) end
+    if CooldownFrame_Set then
+        CooldownFrame_Set(cooldown, start or 0, duration or 0, enable)
+    elseif (duration or 0) > 0 then
+        cooldown:SetCooldown(start, duration)
+    else
+        cooldown:SetCooldown(0, 0)
+    end
+end
+
+local function UpdateCooldowns()
+    for _, frame in pairs(state.frames) do
+        for _, button in ipairs(rawget(frame, "buttons") or {}) do
+            if button.bag and button:IsShown() then UpdateCooldown(button) end
+        end
+    end
+end
+ns.UpdateCooldowns = UpdateCooldowns
+
 local function MakeSlotButton(parent)
     local button = CreateFrame("Button", nil, parent, "SecureActionButtonTemplate")
     button:SetSize(SlotSize(), SlotSize())
-    -- Right click uses the item (and sells it at a vendor). Left click and dragging pick it up, like the game's bags.
+    -- Right click uses the item (and sells it at a vendor). Left click and dragging pick it up, like the game's bags,
+    -- unless the sack is set to use items on left click (then only dragging picks up).
     button:RegisterForClicks("AnyDown", "AnyUp")
     button:RegisterForDrag("LeftButton")
     button:SetAttribute("type2", "item")
+    -- The secure action normally fires when the mouse goes DOWN, which would use an item the moment you start to drag
+    -- it. Fire on release instead, so holding and moving picks the item up and a plain click uses it.
+    button:SetAttribute("useOnKeyDown", false)
     button:SetScript("PreClick", function(self, mouse, down)
-        if mouse == "LeftButton" and not down and self.bag then Container.PickupContainerItem(self.bag, self.slot) end
+        local atVendor = MerchantFrame and MerchantFrame:IsShown()
+        if state.debugClicks then
+            ns.Say(string.format("click %s %s: clickUse=%s type1=%s type2=%s onKeyDown=%s item=%s bag=%s slot=%s vendor=%s combat=%s", tostring(mouse),
+                down and "down" or "up", tostring(self.clickUse), tostring(self:GetAttribute("type1")), tostring(self:GetAttribute("type2")), tostring(self:GetAttribute("useOnKeyDown")),
+                tostring(self:GetAttribute("item")), tostring(self.bag), tostring(self.slot), tostring(atVendor and true or false),
+                tostring(InCombatLockdown and InCombatLockdown() or false)))
+        end
+        if mouse == "LeftButton" and self.clickUse and atVendor and not (InCombatLockdown and InCombatLockdown()) then
+            -- A sack set to use items on left click behaves like the game's bags at a vendor: no use, only pick up.
+            self:SetAttribute("type1", nil)
+            self.leftOff = true
+        end
+        if mouse == "LeftButton" and not down and self.bag and (not self.clickUse or self.leftOff) then
+            Container.PickupContainerItem(self.bag, self.slot)
+        end
         -- The secure "use item" action equips bags and gear at a vendor instead of selling them. At a vendor the game's
         -- own bags call UseContainerItem, which sells, so do that: the secure action is switched off for this click
         -- and the sale is made once, when the button comes back up.
@@ -31,6 +109,10 @@ local function MakeSlotButton(parent)
         end
     end)
     button:SetScript("PostClick", function(self)
+        if self.leftOff then
+            self.leftOff = nil
+            self:SetAttribute("type1", "item")
+        end
         if self.selling then
             self.selling = nil
             self:SetAttribute("type2", "item")
@@ -47,12 +129,21 @@ local function MakeSlotButton(parent)
     button.icon = button:CreateTexture(nil, "ARTWORK")
     button.icon:SetPoint("TOPLEFT", 2, -2)
     button.icon:SetPoint("BOTTOMRIGHT", -2, 2)
-    button.count = button:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
+    -- The cooldown sweep (and, with a cooldown-text addon, its timer) draws over the icon; the stack count sits on a
+    -- frame above it so the sweep does not dim the number.
+    button.cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
+    button.cooldown:SetPoint("TOPLEFT", 2, -2)
+    button.cooldown:SetPoint("BOTTOMRIGHT", -2, 2)
+    if button.cooldown.SetHideCountdownNumbers then button.cooldown:SetHideCountdownNumbers(false) end
+    button.over = CreateFrame("Frame", nil, button)
+    button.over:SetAllPoints()
+    button.over:SetFrameLevel(button.cooldown:GetFrameLevel() + 1)
+    button.count = button.over:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
     button.count:SetPoint("BOTTOMRIGHT", -3, 3)
     -- A small square in the top corner: green when the item is in a special bag, amber when it fits a special bag
     -- that has room but sits in a normal bag, grey when it fits one that is full.
     button.mark = button:CreateTexture(nil, "OVERLAY")
-    button.mark:SetSize(7, 7)
+    button.mark:SetSize(math.max(2, math.floor(ns.SlotSize() / 5)), math.max(2, math.floor(ns.SlotSize() / 5)))
     button.mark:SetPoint("TOPRIGHT", -2, -2)
     button.mark:Hide()
     button:SetScript("OnEnter", function(self)
@@ -285,7 +376,7 @@ end
 -- Ends a drag: remembers where the box went and which box, if any, it is now docked against.
 local function FinishDrag(group, frame)
     EndSackDrag(frame)
-    if state.vendor then return end
+    if DockFrame() then return end
     SavePosition(group, frame)
     local before = group.dock
     group.dock = DockOf(group, frame)
@@ -295,6 +386,24 @@ local function FinishDrag(group, frame)
     if (group.dock or before or changed) and state.refresh then state.refresh() end
 end
 
+-- How a sack that uses its items on left click is marked (its title and a thin border), chosen on the Sacks tab.
+local CLICK_COLORS = {
+    { label = "Green", value = "green", r = 0.3, g = 1, b = 0.3 },
+    { label = "Blue", value = "blue", r = 0.4, g = 0.7, b = 1 },
+    { label = "Purple", value = "purple", r = 0.8, g = 0.5, b = 1 },
+    { label = "Red", value = "red", r = 1, g = 0.35, b = 0.35 },
+    { label = "White", value = "white", r = 1, g = 1, b = 1 },
+    { label = "No marking", value = "none" },
+}
+local function ClickColor()
+    local wanted = SacksDB.clickColor or "green"
+    for _, color in ipairs(CLICK_COLORS) do
+        if color.value == wanted then return color.r, color.g, color.b end
+    end
+    return 0.3, 1, 0.3
+end
+ns.CLICK_COLORS = CLICK_COLORS
+
 local function MakeGroupFrame(group)
     local frame = CreateFrame("Frame", nil, UIParent)
     frame:SetMovable(true)
@@ -303,11 +412,24 @@ local function MakeGroupFrame(group)
     frame.back:SetAllPoints()
     frame.back:SetColorTexture(0, 0, 0, 0.45)
     frame.title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    -- the border of a sack set to use items on left click
+    frame.edges = {}
+    for _, edge in ipairs({ { "TOPLEFT", "TOPRIGHT", true }, { "BOTTOMLEFT", "BOTTOMRIGHT", true },
+                            { "TOPLEFT", "BOTTOMLEFT", false }, { "TOPRIGHT", "BOTTOMRIGHT", false } }) do
+        local line = frame:CreateTexture(nil, "BORDER")
+        line:SetPoint(edge[1])
+        line:SetPoint(edge[2])
+        local thin = (PixelUtil and PixelUtil.GetNearestPixelSize and UIParent.GetEffectiveScale)
+            and PixelUtil.GetNearestPixelSize(1, UIParent:GetEffectiveScale(), 1) or 1
+        if edge[3] then line:SetHeight(thin) else line:SetWidth(thin) end
+        line:Hide()
+        frame.edges[#frame.edges + 1] = line
+    end
     frame.handle = CreateFrame("Frame", nil, frame)
     frame.handle:EnableMouse(true)
     frame.handle:RegisterForDrag("LeftButton")
     frame.handle:SetScript("OnDragStart", function()
-        if state.vendor then return end
+        if DockFrame() then return end
         -- Without a title the whole sack is the handle, and it takes shift to avoid dragging one by accident.
         if group.title == "NONE" and not (IsShiftKeyDown and IsShiftKeyDown()) then return end
         BeginSackDrag(frame)
@@ -359,13 +481,32 @@ local function FillGroup(group, items, free, special)
     local hasBlank = blankMode ~= "NONE"
     local shift = blankMode == "FIRST" and 1 or 0
     local cells = math.max(1, #items + (hasBlank and 1 or 0))
-    local columns, rows
-    if layout.flow == "COLUMNS" then
-        rows = math.min(layout.wrap, cells)
-        columns = math.ceil(cells / layout.wrap)
-    else
-        columns = math.min(layout.wrap, cells)
-        rows = math.ceil(cells / layout.wrap)
+    local function Dimensions(grid)
+        if grid.flow == "COLUMNS" then
+            return math.ceil(cells / grid.wrap), math.min(grid.wrap, cells)
+        end
+        return math.min(grid.wrap, cells), math.ceil(cells / grid.wrap)
+    end
+    local columns, rows = Dimensions(layout)
+    -- At a vendor or the bank every sack is laid out like a page, from the top left, across then down. The cells keep the
+    -- order you normally read them in (left to right, top to bottom), so a sack that grows up or left looks the
+    -- same, just packed to the top left. Afterwards it goes back to its own corner and flow.
+    local reading
+    if DockFrame() then
+        local fromRightNow = layout.anchor == "TOPRIGHT" or layout.anchor == "BOTTOMRIGHT"
+        local fromBottomNow = layout.anchor == "BOTTOMLEFT" or layout.anchor == "BOTTOMRIGHT"
+        local list = {}
+        for index = 1, cells do
+            local column, row = GridCell(index, layout)
+            local visualColumn = fromRightNow and (columns - 1 - column) or column
+            local visualRow = fromBottomNow and (rows - 1 - row) or row
+            list[index] = { index = index, key = visualRow * columns + visualColumn }
+        end
+        table.sort(list, function(a, b) return a.key < b.key end)
+        reading = {}
+        for rank, entry in ipairs(list) do reading[entry.index] = rank end
+        layout = { anchor = "TOPLEFT", flow = "ROWS", title = layout.title, wrap = columns }
+        columns, rows = Dimensions(layout)
     end
     local topSpace = layout.title == "TOP" and TITLE_HEIGHT or PADDING
     local bottomSpace = layout.title == "BOTTOM" and TITLE_HEIGHT or PADDING
@@ -377,6 +518,7 @@ local function FillGroup(group, items, free, special)
     local fromRight = layout.anchor == "TOPRIGHT" or layout.anchor == "BOTTOMRIGHT"
     local fromBottom = layout.anchor == "BOTTOMLEFT" or layout.anchor == "BOTTOMRIGHT"
     local function place(frameToPlace, index)
+        if reading then index = reading[index] end
         local column, row = GridCell(index, layout)
         local x = column * (size + SLOT_GAP)
         local y = row * (size + SLOT_GAP)
@@ -412,6 +554,11 @@ local function FillGroup(group, items, free, special)
         button:SetSize(size, size)
         button.bag, button.slot = item.bag, item.slot
         button:SetAttribute("item", item.bag .. " " .. item.slot)
+        -- A sack can use its items on left click, like an action bar. Dragging still picks an item up.
+        button.clickUse = group.useOnClick and true or false
+        if not (InCombatLockdown and InCombatLockdown()) then
+            button:SetAttribute("type1", button.clickUse and "item" or nil)
+        end
         button.icon:SetTexture(item.icon)
         local color = ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[item.quality]
         if color then button.back:SetColorTexture(color.r, color.g, color.b, 0.45) else button.back:SetColorTexture(0, 0, 0, 0.3) end
@@ -438,11 +585,39 @@ local function FillGroup(group, items, free, special)
         end
         place(button, index + shift)
         button:Show()
+        UpdateCooldown(button)
     end
     for index = #items + 1, #frame.buttons do
         frame.buttons[index].bag = nil
         frame.buttons[index]:Hide()
     end
+
+    -- A tooltip belongs to the slot it was opened on. When that slot now holds another item (one was sold or the
+    -- list shifted) show the new item; when it is empty or gone, close the tooltip.
+    local owner = GameTooltip.GetOwner and GameTooltip:GetOwner()
+    if owner then
+        for _, button in ipairs(frame.buttons) do
+            if owner == button then
+                if button:IsShown() and button.bag then
+                    button:GetScript("OnEnter")(button)
+                else
+                    GameTooltip:Hide()
+                    if ResetCursor then ResetCursor() end
+                end
+            end
+        end
+    end
+    local markR, markG, markB = ClickColor()
+    local marked = group.useOnClick and markR ~= nil
+    for _, line in ipairs(frame.edges) do
+        if marked then
+            line:SetColorTexture(markR, markG, markB, 0.9)
+            line:Show()
+        else
+            line:Hide()
+        end
+    end
+    if marked then frame.title:SetTextColor(markR, markG, markB) else frame.title:SetTextColor(1, 0.82, 0) end
 
     frame.blank:SetSize(size, size)
     if hasBlank then
@@ -507,8 +682,9 @@ local function PlaceGroups()
     -- Every anchor is dropped first. A sack that was stacked at a vendor is anchored to another sack, and putting
     -- it back while that stale anchor is still there can make two sacks depend on each other, which the game refuses.
     for _, group in ipairs(groups) do state.frames[group]:ClearAllPoints() end
-    local vendor = state.vendor and MerchantFrame
-    local limit = vendor and tonumber(MerchantFrame:GetHeight()) or 0
+    local vendor = DockFrame()
+    local limit = vendor and tonumber(vendor:GetHeight()) or 0
+    local overhang = vendor and Overhang(vendor) or 0
     local placed = {}
     -- Finds the spot for a box of this size: as far left as it fits, and as high as it fits there. Candidate spots are
     -- the top corner, below each placed box, and beside each placed box, so a box slips into the gap beside narrow ones.
@@ -540,12 +716,12 @@ local function PlaceGroups()
         -- nothing at all to show (no items, no empty slot, no title) goes away.
         local hidden = BlankMode(group) == "NONE" and group.title == "NONE" and (state.counts[group] or 0) == 0
         if vendor then
-            -- Beside the vendor window, in sack-list order, filling downward to the window's height. A box that no
+            -- Beside the vendor (or bank) window, in sack-list order, filling downward to the window's height. A box that no
             -- longer fits below goes into free space beside the narrower boxes, or into a new column.
             if not hidden then
                 local height, width = tonumber(frame:GetHeight()) or 0, tonumber(frame:GetWidth()) or 0
                 local x, y = FindSpot(width, height)
-                frame:SetPoint("TOPLEFT", MerchantFrame, "TOPRIGHT", PADDING + x, -y)
+                frame:SetPoint("TOPLEFT", vendor, "TOPRIGHT", PADDING + overhang + x, -y)
                 placed[#placed + 1] = { x = x, y = y, width = width, height = height }
             end
         else
@@ -562,10 +738,72 @@ local SORT_KEYS = {
     class = { label = "Class", value = function(item) return item.classID or -1 end },
     sub = { label = "Subclass", value = function(item) return item.subClassID or -1 end },
     quality = { label = "Quality", value = function(item) return item.quality end },
-    count = { label = "Stack size", value = function(item) return item.count or 1 end },
+    count = { label = "Number carried", value = function(item) return item.count or 1 end },
     position = { label = "Bag position", value = function(item) return item.bag end },
 }
-local SORT_KEY_ORDER = { "name", "class", "sub", "quality", "count", "position" }
+local SORT_KEY_ORDER = { "name", "class", "sub", "quality" }
+-- Every other field a rule can test is a sort key too, read the same way the rules read it. An equip slot sorts in the
+-- order the slots are listed in the rule editor; the rest sort by their number.
+for _, field in ipairs({ "ilvl", "level", "price", "equip", "bind", "bound", "reagent", "family", "stack" }) do
+    local stat = STATS[field]
+    local label = field == "stack" and "Max stack size" or (stat.text:gsub("^%l", string.upper))
+    if field == "equip" then
+        local slotRank = {}
+        for index, option in ipairs(Stat.Options("equip")) do slotRank[option.value] = index end
+        SORT_KEYS[field] = { label = label, value = function(item) return slotRank[stat.get(item) or "NONE"] or 0 end }
+    else
+        SORT_KEYS[field] = { label = label, value = function(item) return tonumber(stat.get(item)) or -1 end }
+    end
+    SORT_KEY_ORDER[#SORT_KEY_ORDER + 1] = field
+end
+SORT_KEY_ORDER[#SORT_KEY_ORDER + 1] = "count"
+SORT_KEY_ORDER[#SORT_KEY_ORDER + 1] = "position"
+
+-- An "Items matching" step puts the items that match its rule first, or last when it is descending. A rule with no
+-- lines matches nothing, so the step then changes nothing.
+local function MatchRank(rule, item)
+    if not rule then return 1 end
+    for _, condition in ipairs(rule) do
+        -- a rule with only empty text lines has nothing to match yet
+        if not IsBlankLine(condition) then
+            if Matches(rule, item) then return 0 end
+            return 1
+        end
+    end
+    return 1
+end
+
+-- Sorting steps saved by an earlier version as one "buckets" step become one "Items matching" step per bucket,
+-- which sorts items exactly the same way.
+-- Subclass ids are labels, not a scale, so only "is" and "is not" mean anything for them. A line saved with an
+-- ordered comparison on one becomes "is".
+local ORDERED = { ["<"] = true, ["<="] = true, [">"] = true, [">="] = true }
+local function FixRule(rule)
+    for _, clause in ipairs(rule or {}) do
+        if (clause.field == "sub" or clause.field == "class") and ORDERED[clause.op] then
+            clause.op = "="
+            ns.Say("a " .. clause.field .. " line used < or > (meaningless for ids); it now reads 'is'")
+        end
+    end
+end
+
+local function UpgradeSort(group)
+    FixRule(group.rule)
+    for _, spec in ipairs(group.sort or {}) do FixRule(spec.rule) end
+    if not group.sort then return end
+    local list = {}
+    for _, spec in ipairs(group.sort) do
+        if spec.buckets then
+            for _, bucket in ipairs(spec.buckets) do
+                list[#list + 1] = { key = "match", rule = bucket.rule or {} }
+            end
+        else
+            if spec.key == "match" then spec.descending = nil end
+            list[#list + 1] = spec
+        end
+    end
+    group.sort = list
+end
 
 local function SortItems(group, items)
     local rank = {}
@@ -576,6 +814,9 @@ local function SortItems(group, items)
         if rankA ~= rankB then return rankA < rankB end
         for _, spec in ipairs(keys) do
             local key = SORT_KEYS[spec.key]
+            if spec.key == "match" then
+                key = { value = function(item) return MatchRank(spec.rule, item) end }
+            end
             if key then
                 local left, right = key.value(a), key.value(b)
                 if left ~= right then
@@ -611,7 +852,7 @@ local function MakeWidget(group)
     frame.extra = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     frame.extra:SetTextColor(0.4, 1, 0.4)
     frame:SetScript("OnDragStart", function()
-        if not state.vendor then BeginSackDrag(frame) end
+        if not DockFrame() then BeginSackDrag(frame) end
     end)
     frame:SetScript("OnDragStop", function() FinishDrag(group, frame) end)
     frame:SetScript("OnMouseUp", DropIntoFreeSlot)
@@ -642,7 +883,7 @@ local function UpdateWidget(free, special)
     frame.text:SetText(free)
     if free > 0 then frame.text:SetTextColor(1, 0.82, 0) else frame.text:SetTextColor(1, 0.2, 0.2) end
     frame.extra:SetText(special > 0 and ("+" .. special) or "")
-    if not state.vendor then
+    if not DockFrame() then
         frame:ClearAllPoints()
         PlaceOne(group, frame)
     end
@@ -665,7 +906,7 @@ local function Refresh()
             SacksDB.seen[item.itemID] = { name = item.name, icon = item.icon, classID = item.classID,
                 subClassID = item.subClassID, quality = item.quality, sellPrice = item.sellPrice,
                 itemLevel = item.itemLevel, minLevel = item.minLevel, stackMax = item.stackMax, equip = item.equip,
-                bindType = item.bindType, reagent = item.reagent, bound = item.bound, family = item.family }
+                bindType = item.bindType, reagent = item.reagent, bound = item.bound, family = item.family, tip = item.tip }
         end
     end
     -- The last sack takes whatever no other sack wants, so every item in your bags is always on screen somewhere.
@@ -714,6 +955,7 @@ local function CreateSack(name, rule)
 end
 
 ns.CreateSack = CreateSack
+ns.UpgradeSort = UpgradeSort
 ns.HideRemoved = HideRemoved
 ns.Refresh = Refresh
 ns.SORT_KEYS = SORT_KEYS

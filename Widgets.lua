@@ -21,9 +21,10 @@ local function NativeFrame(kind, parent, template)
     return CreateFrame(kind, nil, parent), false
 end
 
+-- width may be a number, or nil to fit the button to its own text (a table of texts fits the widest)
 local function MakeButton(parent, text, width, onClick)
     local button = NativeFrame("Button", parent, "UIPanelButtonTemplate")
-    button:SetSize(width, BUTTON_HEIGHT)
+    button:SetSize(width or ns.ButtonWidth(text), BUTTON_HEIGHT)
     button:SetText(text)
     button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     button:SetScript("OnClick", onClick)
@@ -120,9 +121,10 @@ end
 
 local FIELD_OPERATORS = {
     class = { "=", "~=" },
-    sub = { "=", "~=", "<", "<=", ">", ">=" },
+    sub = { "=", "~=" },
     quality = { "=", "~=", "<", "<=", ">", ">=" },
     name = { "contains", "!contains", "matches", "!matches" },
+    tooltip = { "contains", "!contains", "matches", "!matches" },
     item = { "=", "~=" },
     ilvl = { "=", "~=", "<", "<=", ">", ">=" }, level = { "=", "~=", "<", "<=", ">", ">=" },
     stack = { "=", "~=", "<", "<=", ">", ">=" }, price = { "=", "~=", "<", "<=", ">", ">=" },
@@ -138,13 +140,7 @@ end
 -- A drop-down list. It uses the game's own drop-down menu; if this client has none it becomes a button that steps
 -- through the choices instead. With a title the label sits above it. x, y place it inside parent.
 local dropdowns = 0
-local measuring
-local function TextWidth(text)
-    measuring = measuring or UIParent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    measuring:SetText(text or "")
-    local width = measuring:GetStringWidth()
-    return type(width) == "number" and width or 0
-end
+local TextWidth = ns.TextWidth
 
 local function MakeChoice(parent, title, x, y, getOptions, onChange, width)
     width = width or CHOICE_WIDTH
@@ -201,7 +197,7 @@ local function MakeChoice(parent, title, x, y, getOptions, onChange, width)
     function choice.fit()
         local widest = 0
         for _, option in ipairs(getOptions()) do widest = math.max(widest, TextWidth(option.label)) end
-        local fitted = math.ceil(widest) + 32 -- room for the dropdown arrow and a little air
+        local fitted = math.ceil(widest) + 2 * DROPDOWN_INSET -- room for the dropdown arrow and a little air
         choice.width = fitted
         if menu then UIDropDownMenu_SetWidth(menu, fitted) else choice.frame:SetWidth(fitted + DROPDOWN_INSET) end
         return fitted

@@ -160,6 +160,7 @@ local function ConditionMatches(condition, item)
     end
     if field == "quality" then return Compare(condition.op, item.quality or 0, condition.value) end
     if field == "name" then return TextMatches(condition.op, condition.value, item.name) end
+    if field == "tooltip" then return TextMatches(condition.op, condition.value, item.tip) end
     if field == "item" then return Compare(condition.op, item.itemID, condition.value) end
     if field == "family" then
         local fits = BitAnd(item.family or 0, condition.value or 0) ~= 0
@@ -171,14 +172,21 @@ local function ConditionMatches(condition, item)
 end
 
 -- Conditions are joined by AND unless one says join = "OR". AND is applied first, so "A and B or C" means (A and B) or C.
+-- A text line with nothing typed in it yet says nothing, so it is left out wherever a rule is used.
+local function IsBlankLine(condition)
+    return (condition.field == "name" or condition.field == "tooltip") and (type(condition.value) ~= "string" or condition.value == "")
+end
+
 local function Matches(rule, item)
     local groupHolds = true
     for index, condition in ipairs(rule) do
-        if index > 1 and condition.join == "OR" then
-            if groupHolds then return true end
-            groupHolds = true
+        if not IsBlankLine(condition) then
+            if index > 1 and condition.join == "OR" then
+                if groupHolds then return true end
+                groupHolds = true
+            end
+            if groupHolds and not ConditionMatches(condition, item) then groupHolds = false end
         end
-        if groupHolds and not ConditionMatches(condition, item) then groupHolds = false end
     end
     return groupHolds
 end
@@ -273,7 +281,7 @@ local function QualityName(quality)
     return _G["ITEM_QUALITY" .. quality .. "_DESC"] or tostring(quality)
 end
 
-local FIELD_TEXT = { class = "class", sub = "subclass", quality = "quality", name = "name", item = "item" }
+local FIELD_TEXT = { class = "class", sub = "subclass", quality = "quality", name = "name", tooltip = "tooltip text", item = "item" }
 local OP_TEXT = {
     ["="] = "is", ["~="] = "is not", ["<"] = "is below", ["<="] = "is at most", [">"] = "is above",
     [">="] = "is at least", contains = "contains", ["!contains"] = "doesn't contain", matches = "matches pattern",
@@ -359,6 +367,7 @@ ns.EnsureFallback = EnsureFallback
 ns.FindGroup = FindGroup
 ns.IsOldRule = IsOldRule
 ns.Matches = Matches
+ns.IsBlankLine = IsBlankLine
 ns.OP_TEXT = OP_TEXT
 ns.ParseRule = ParseRule
 ns.PatternError = PatternError

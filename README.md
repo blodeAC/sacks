@@ -19,7 +19,9 @@ or copy this folder to `World of Warcraft/_forever_/Interface/AddOns/sacks`.
 - Click the bag icon on the minimap edge, or type `/sacks`, to open the settings window.
 - Drag a sack by its title bar to move it. Edges snap to the screen and to other sacks (hold Alt for a free drag). A sack dropped against another one stays docked to it when either changes size.
 - `B` and the bag buttons still open the game's own bags. The option on the Sacks tab stops the game opening them by itself (vendors and so on).
-- At a vendor, the sacks stack beside the vendor window, each keeping its own layout, and fill gaps beside narrower sacks.
+- At a vendor or the bank, the sacks stack beside that window and fill gaps beside narrower sacks. Each is laid out like a page from the top left, with the items in the same reading order as normal, then goes back to its own corner and flow afterwards. Right-click sells there, as in the game's bags.
+- A sack can use its items on left click, like an action bar (Sacks tab, the "Left-click use" box on the sack's row). Hold and drag to move an item. At a vendor left click just picks the item up. Such sacks are marked with a coloured title and border; the colour (or no marking) is chosen at the top of the Sacks tab.
+- On the Layout tab, "Copy layout from" (top) copies another sack's corner, fill direction, title position, slots per row, title text, and "Copy order from" (above the sort steps) copies its sort steps and Reverse. Neither copies the rule, pins or position.
 
 ## Settings window
 
@@ -28,6 +30,10 @@ or copy this folder to `World of Warcraft/_forever_/Interface/AddOns/sacks`.
 **Items** - every kind of item you carry or have carried, with what the game says about it. Click items to select them and the sack's rule lines are filled in from what they share; edit the lines by hand any time. Columns follow the fields the lines use.
 
 **Layout** - how the selected sack grows (corner, flow, slots per row), its title, which end shows the empty slot, its sort order, and the items pinned to the front.
+
+### Sorting
+
+A sack's order is a numbered list of up to 10 steps, one row each. A step is either a **rule** ("Items where tooltip contains mana": the items that match come first) or a **sort field** (any field a rule can test, plus number carried and bag position, ascending or descending). A step only decides between two items when every step above it ties. Pinned items always come first. **+ And** adds another condition to a rule step. For example, one rule step `tooltip contains mana` followed by one `tooltip contains heals` puts mana drinks first, then bandages, then everything else.
 
 ## Rules
 
@@ -38,6 +44,7 @@ A rule is a list of lines. Each line is `field operator value`, joined with AND 
 | class, sub | item class and subclass |
 | quality | item quality (comparisons like "above Poor" work) |
 | name | name pattern |
+| tooltip | text in the item's tooltip, such as "mana" or "health" |
 | item | one exact item |
 | ilvl, level | item level, required level |
 | stack | stack size |

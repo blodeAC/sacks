@@ -101,6 +101,7 @@ local HELP = {
     "/sacks fields - every detail the game gives for the item under the mouse (or /sacks fields [item link])",
     "/sacks probe - list every item in your bags with its class, subclass and quality",
     "/sacks bags - open or close the game's own bags",
+    "/sacks errors - the last errors this add-on raised (kept across reloads); /sacks errors clear empties it",
     "/sacks reset - back to the starting sacks",
     "Drag a sack by its title bar to move it.",
 }
@@ -165,6 +166,27 @@ function commands.anchor(args)
 end
 
 function commands.classes() ShowLines(ClassLines()) end
+
+-- The errors this add-on has raised, newest last (kept across reloads). "/sacks errors clear" empties the list.
+function commands.errors(args)
+    local list = SacksDB and SacksDB.errors or {}
+    if args[1] == "clear" then
+        if SacksDB then SacksDB.errors = nil end
+        return Say("error log cleared")
+    end
+    if #list == 0 then return Say("no errors recorded") end
+    for index = math.max(1, #list - 4), #list do
+        local entry = list[index]
+        Say(string.format("[%s%s%s] %s", entry.time or "", entry.combat and " combat" or "", (entry.count or 1) > 1 and (" x" .. entry.count) or "", entry.text))
+        if entry.stack and entry.stack ~= "" then Say(entry.stack) end
+    end
+end
+
+-- Prints what every click on a sack's item does (for finding out why a click does nothing).
+function commands.clicks()
+    state.debugClicks = not state.debugClicks
+    Say("click log " .. (state.debugClicks and "on: click an item and read the lines below" or "off"))
+end
 
 function commands.bags() ToggleOwnBags() end
 
