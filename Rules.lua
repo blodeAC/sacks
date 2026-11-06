@@ -323,6 +323,8 @@ local function DefaultGroups()
     local function add(name, rule, x, y)
         groups[#groups + 1] = { name = name, rule = rule, point = "CENTER", x = x, y = y }
     end
+    add("Combat loot", {}, -300, 300)
+    groups[1].builtin = true
     add("Quest", { { field = "class", op = "=", value = Enum.ItemClass.Questitem } }, -300, 200)
     add("Junk", { { field = "quality", op = "<=", value = Enum.ItemQuality.Poor } }, -300, 100)
     add("Consumables", { { field = "class", op = "=", value = Enum.ItemClass.Consumable } }, -300, 0)
@@ -359,7 +361,37 @@ local function EnsureFallback()
     SacksDB.fallback.fixed = true
 end
 
+-- The "Combat loot" sack is built in, like Other: it always exists and is first in the list. It has no rule: the sacks
+-- cannot get new slots during combat, so it is where an item you loot in combat is shown until combat ends (then the
+-- sacks are rebuilt and the item goes to its own sack). It is laid out like any sack and hidden outside combat unless
+-- "always show" is on. Older saves had it as "New items" or not at all: that one is adopted, or one is made.
+local COMBAT_NAME = "Combat loot"
+local function EnsureCombatSack()
+    local found
+    for _, group in ipairs(SacksDB.groups) do
+        if group.builtin then found = group end
+    end
+    if not found then
+        for _, group in ipairs(SacksDB.groups) do
+            if not found and (group.name == "New items" or group.name == COMBAT_NAME) then found = group end
+        end
+    end
+    if found then
+        for index, group in ipairs(SacksDB.groups) do
+            if group == found then table.remove(SacksDB.groups, index) break end
+        end
+    else
+        found = { point = "CENTER", x = -300, y = 300 }
+    end
+    found.name = COMBAT_NAME
+    found.builtin = true
+    found.rule = {}
+    found.hideEmpty = nil
+    table.insert(SacksDB.groups, 1, found) -- first in the list: in combat it is what gets the new items
+end
+
 -- shared with the files after this one
+ns.EnsureCombatSack = EnsureCombatSack
 ns.AllGroups = AllGroups
 ns.DefaultGroups = DefaultGroups
 ns.Describe = Describe

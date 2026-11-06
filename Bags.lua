@@ -17,6 +17,17 @@ local function BitAnd(a, b)
     return result
 end
 
+-- What the game's own bags mark quest items with: a "!" for one that starts a quest you are not on, a border for one a
+-- quest wants. Asked again when the quest log changes, since accepting a quest changes no bag.
+local function QuestInfo(bag, slot)
+    local questInfo = C_Container and C_Container.GetContainerItemQuestInfo
+    if not questInfo then return false, false end
+    local ok, quest = pcall(questInfo, bag, slot)
+    if not (ok and type(quest) == "table") then return false, false end
+    return quest.questID and not quest.isActive and true or false, (quest.isQuestItem or quest.questID) and true or false
+end
+ns.QuestInfo = QuestInfo
+
 -- The text of an item's tooltip, as one string: what the game's item info leaves out (a drink restores mana, a bandage
 -- heals, and so on). Read from the game's tooltip data where it has it, otherwise from a hidden tooltip.
 local scanTip
@@ -73,6 +84,7 @@ local function ReadSlot(bag, slot)
     entry.equip = (info[9] and info[9] ~= "" and info[9] ~= "INVTYPE_NON_EQUIP_IGNORE") and info[9] or "NONE"
     entry.bindType, entry.reagent = tonumber(info[14]), info[17] and 1 or 0
     entry.bound = entry.bound or 0
+    entry.questBang, entry.questItem = ns.QuestInfo(bag, slot)
     entry.quality = entry.quality or 0
     local family = GetItemFamily or (C_Item and C_Item.GetItemFamily)
     entry.family = family and tonumber(family(entry.link or entry.itemID)) or 0

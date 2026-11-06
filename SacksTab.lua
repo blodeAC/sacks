@@ -64,10 +64,10 @@ local function MakeRow(parent)
     end)
     row.use:SetPoint("LEFT", col.use + (col.useW - CHECK_SIZE) / 2, 0)
     row:SetScript("OnEnter", function(self)
-        if not self.group or (not self.group.fixed and #self.group.rule == 0) then return end
+        if not self.group or (not self.group.fixed and not self.group.builtin and #self.group.rule == 0) then return end
         GameTooltip:SetOwner(self, "ANCHOR_TOPLEFT")
         GameTooltip:SetText(self.group.name)
-        GameTooltip:AddLine("Takes: " .. Describe(self.group.rule), 1, 1, 1, true)
+        GameTooltip:AddLine("Takes: " .. (self.group.builtin and "what you loot in combat, until it ends" or Describe(self.group.rule)), 1, 1, 1, true)
         GameTooltip:Show()
     end)
     row:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -89,7 +89,7 @@ local function MakeRow(parent)
     local function move(by)
         local _, index = FindGroup(row.group.name)
         local other = SacksDB.groups[index + by]
-        if not other then return end
+        if not other or other.builtin then return end
         SacksDB.groups[index], SacksDB.groups[index + by] = other, SacksDB.groups[index]
         Refresh()
     end
@@ -261,7 +261,7 @@ local function RefreshSacks()
     end
     page.bagInfo:SetText(table.concat(lines, "\n"))
 
-    local top = 4 + 2 * (CHECK_SIZE + PADDING) + #lines * LABEL_HEIGHT + PADDING + SLOT_GAP * 3
+    local top = SLOT_GAP + 2 * (CHECK_SIZE + PADDING) + #lines * LABEL_HEIGHT + PADDING + SLOT_GAP * 3
     page.listHeader:ClearAllPoints()
     page.listHeader:SetPoint("TOPLEFT", 0, -top)
     page.listRule:ClearAllPoints()
@@ -292,9 +292,16 @@ local function RefreshSacks()
         row.count:SetText(tostring(held))
         row.use:SetChecked(group.useOnClick and true or false)
         if held == 0 then row.count:SetTextColor(0.6, 0.6, 0.6) else row.count:SetTextColor(1, 1, 1) end
-        row.desc:SetText((not group.fixed and #group.rule == 0) and "takes nothing yet: add lines on the Items tab" or Describe(group.rule))
+        row.desc:SetText(group.builtin and "what you loot in combat, until it ends" or ((not group.fixed and #group.rule == 0) and "takes nothing yet: add lines on the Items tab" or Describe(group.rule)))
         -- The last sack can't be edited, removed or moved: it is what keeps every item on screen.
-        if group.fixed then
+        if group.builtin then row.use:Hide() else row.use:Show() end -- nothing in Combat loot can be used
+        if group.builtin then
+            -- no rule to edit and nothing to remove; its layout is on the Layout tab like every sack's
+            row.edit:Hide()
+            row.remove:Hide()
+            row.up:Hide()
+            row.down:Hide()
+        elseif group.fixed then
             row.edit:Hide()
             row.remove:Hide()
             row.up:Hide()
@@ -304,7 +311,7 @@ local function RefreshSacks()
             row.remove:Show()
             row.up:Show()
             row.down:Show()
-            if position == 1 then row.up:Disable() else row.up:Enable() end
+            if position == 1 or (groups[position - 1] and groups[position - 1].builtin) then row.up:Disable() else row.up:Enable() end
             if position == real then row.down:Disable() else row.down:Enable() end
         end
         row:ClearAllPoints()

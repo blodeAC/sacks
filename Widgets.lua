@@ -22,6 +22,13 @@ local function NativeFrame(kind, parent, template)
 end
 
 -- width may be a number, or nil to fit the button to its own text (a table of texts fits the widest)
+-- An option may carry a colour ({0..1, 0..1, 0..1}); it is written in that colour in the list and in the box.
+local function Coloured(option)
+    local colour = option.color
+    if not colour then return option.label end
+    return string.format("|cff%02x%02x%02x%s|r", math.floor(colour[1] * 255 + 0.5), math.floor(colour[2] * 255 + 0.5), math.floor(colour[3] * 255 + 0.5), option.label)
+end
+
 local function MakeButton(parent, text, width, onClick)
     local button = NativeFrame("Button", parent, "UIPanelButtonTemplate")
     button:SetSize(width or ns.ButtonWidth(text), BUTTON_HEIGHT)
@@ -171,17 +178,17 @@ local function MakeChoice(parent, title, x, y, getOptions, onChange, width)
         UIDropDownMenu_Initialize(menu, function(_, level)
             for index, option in ipairs(getOptions()) do
                 local info = UIDropDownMenu_CreateInfo()
-                info.text = option.label
+                info.text = Coloured(option)
                 info.checked = index == choice.index
                 info.func = function()
                     choice.index = index
-                    UIDropDownMenu_SetText(menu, option.label)
+                    UIDropDownMenu_SetText(menu, Coloured(option))
                     if onChange then onChange() end
                 end
                 UIDropDownMenu_AddButton(info, level)
             end
         end)
-        function choice.update() UIDropDownMenu_SetText(menu, current().label) end
+        function choice.update() UIDropDownMenu_SetText(menu, Coloured(current())) end
     else
         choice.frame = MakeButton(parent, title or "", width + DROPDOWN_INSET, function(_, mouse)
             local count = #getOptions()
@@ -190,7 +197,7 @@ local function MakeChoice(parent, title, x, y, getOptions, onChange, width)
             if onChange then onChange() end
         end)
         choice.frame:SetPoint("TOPLEFT", parent, "TOPLEFT", x, y - below)
-        function choice.update() choice.frame:SetText(current().label) end
+        function choice.update() choice.frame:SetText(Coloured(current())) end
     end
 
     -- Sizes the box to the widest thing it can show (room for the arrow included) and returns that width.

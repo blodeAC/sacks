@@ -271,7 +271,7 @@ end
 local function SackPickOptions()
     local options = { { label = "New sack", value = NEW_SACK } }
     for _, group in ipairs(AllGroups()) do
-        if not group.fixed then options[#options + 1] = { label = group.name, value = group } end
+        if not group.fixed and not group.builtin then options[#options + 1] = { label = group.name, value = group } end
     end
     return options
 end

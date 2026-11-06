@@ -44,19 +44,67 @@ local function Overhang(window)
 end
 
 -- Shows the item's cooldown (potions, hearthstone, trinkets) on its slot, as the game's own bags do.
+-- The quest marker the game's bags draw over a quest item: a "!" when it starts a quest, a border when a quest wants it.
+local function QuestMarker(texture, item)
+    local path
+    if item.questBang then
+        path = TEXTURE_ITEM_QUEST_BANG or "Interface\\ContainerFrame\\UI-Icon-QuestBang"
+    elseif item.questItem then
+        path = TEXTURE_ITEM_QUEST_BORDER or "Interface\\ContainerFrame\\UI-Icon-QuestBorder"
+    end
+    if path then
+        texture:SetTexture(path)
+        texture:Show()
+    else
+        texture:Hide()
+    end
+end
+
+-- Redraws just the quest markers (no rebuild), for when the quest log changes: accepting a quest makes its "!" go away
+-- without touching a bag.
+local function RefreshQuestMarks()
+    for _, frame in pairs(state.frames or {}) do
+        for _, list in ipairs({ rawget(frame, "buttons") or {}, rawget(frame, "ghosts") or {} }) do
+            for _, slot in ipairs(list) do
+                if rawget(slot, "bag") and slot:IsShown() then
+                    local bang, wanted = ns.QuestInfo(slot.bag, slot.slot)
+                    QuestMarker(slot.quest, { questBang = bang, questItem = wanted })
+                end
+            end
+        end
+    end
+end
+ns.RefreshQuestMarks = RefreshQuestMarks
+
+local reportedSecret
 local function UpdateCooldown(button)
     local cooldown = button.cooldown
     if not cooldown then return end
     local get = (C_Container and C_Container.GetContainerItemCooldown) or GetContainerItemCooldown
     local start, duration, enable = 0, 0, 0
-    if button.bag and get then start, duration, enable = get(button.bag, button.slot) end
-    if CooldownFrame_Set then
-        CooldownFrame_Set(cooldown, start or 0, duration or 0, enable)
-    elseif (duration or 0) > 0 then
-        cooldown:SetCooldown(start, duration)
-    else
-        cooldown:SetCooldown(0, 0)
+    if button.bag and get then
+        local ok, a, b, c = pcall(get, button.bag, button.slot)
+        if not ok then
+            if ns.RecordError then ns.RecordError("cooldown read failed: " .. tostring(a)) end
+            return
+        end
+        start, duration, enable = a, b, c
     end
+    -- In combat the game may hand an add-on cooldown numbers it will not let the add-on look at. Say so once,
+    -- in /sacks errors, along with what the game's own cooldown function did with them.
+    if issecretvalue and (issecretvalue(start) or issecretvalue(duration)) and not reportedSecret then
+        reportedSecret = true
+        if ns.RecordError then ns.RecordError("cooldown numbers are secret values here (combat=" .. tostring(InCombatLockdown and InCombatLockdown() or false) .. ")") end
+    end
+    local ok, err
+    if CooldownFrame_Set then
+        ok, err = pcall(CooldownFrame_Set, cooldown, start or 0, duration or 0, enable)
+    elseif (duration or 0) > 0 then
+        ok, err = pcall(cooldown.SetCooldown, cooldown, start, duration)
+    else
+        ok, err = pcall(cooldown.SetCooldown, cooldown, 0, 0)
+    end
+    if not ok and ns.RecordError then ns.RecordError("cooldown draw failed: " .. tostring(err)) end
 end
 
 local function UpdateCooldowns()
@@ -129,6 +177,9 @@ local function MakeSlotButton(parent)
     button.icon = button:CreateTexture(nil, "ARTWORK")
     button.icon:SetPoint("TOPLEFT", 2, -2)
     button.icon:SetPoint("BOTTOMRIGHT", -2, 2)
+    button.quest = button:CreateTexture(nil, "OVERLAY")
+    button.quest:SetAllPoints()
+    button.quest:Hide()
     -- The cooldown sweep (and, with a cooldown-text addon, its timer) draws over the icon; the stack count sits on a
     -- frame above it so the sweep does not dim the number.
     button.cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
@@ -138,6 +189,14 @@ local function MakeSlotButton(parent)
     button.over = CreateFrame("Frame", nil, button)
     button.over:SetAllPoints()
     button.over:SetFrameLevel(button.cooldown:GetFrameLevel() + 1)
+    -- A plain frame laid over the slot ahead of time and kept hidden. In combat a slot whose item is gone cannot have
+    -- its use action removed (it is secure), but showing this frame catches the click first, so the game is never
+    -- asked to use an empty slot or another item that has moved into it.
+    button.dead = CreateFrame("Frame", nil, button)
+    button.dead:SetAllPoints()
+    button.dead:SetFrameLevel(button.over:GetFrameLevel() + 1)
+    button.dead:EnableMouse(true)
+    button.dead:Hide()
     button.count = button.over:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
     button.count:SetPoint("BOTTOMRIGHT", -3, 3)
     -- A small square in the top corner: green when the item is in a special bag, amber when it fits a special bag
@@ -146,8 +205,27 @@ local function MakeSlotButton(parent)
     button.mark:SetSize(math.max(2, math.floor(ns.SlotSize() / 5)), math.max(2, math.floor(ns.SlotSize() / 5)))
     button.mark:SetPoint("TOPRIGHT", -2, -2)
     button.mark:Hide()
+    -- The glow the game's own bags put on an item that arrived since you last looked at it: its art, its colour by
+    -- quality, and a slow fade in and out. Hovering the item clears it.
+    button.fresh = button.over:CreateTexture(nil, "OVERLAY")
+    button.fresh:SetPoint("CENTER", button.icon, "CENTER")
+    button.fresh:SetBlendMode("ADD")
+    button.fresh:Hide()
+    local ok, group = pcall(button.fresh.CreateAnimationGroup, button.fresh)
+    if ok and type(group) == "table" then
+        local fade = group:CreateAnimation("Alpha")
+        fade:SetFromAlpha(1)
+        fade:SetToAlpha(0.25)
+        fade:SetDuration(0.9)
+        group:SetLooping("BOUNCE")
+        button.freshPulse = group
+    end
     button:SetScript("OnEnter", function(self)
         if self.bag then
+            if ns.IsFresh and ns.IsFresh(self.bag, self.slot) then
+                ns.ClearFresh(self.bag, self.slot)
+                ns.RefreshFresh()
+            end
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:SetBagItem(self.bag, self.slot)
             if self.where then
@@ -274,6 +352,13 @@ local function DockOf(group, frame)
 end
 
 function BeginSackDrag(frame)
+    -- The game does not let a frame be moved in combat while item buttons are attached to it, and raises its
+    -- "blocked from an action" popup if you try. A sack with no item buttons (Combat loot) can still be moved.
+    if InCombatLockdown and InCombatLockdown() and #(rawget(frame, "buttons") or {}) > 0 then
+        frame.noDrag = true
+        ns.Say("sacks with items in them can't be moved in combat (the game doesn't allow it)")
+        return
+    end
     local scale = frame:GetEffectiveScale()
     local cx, cy = GetCursorPosition()
     local left, bottom = frame:GetLeft(), frame:GetBottom()
@@ -375,6 +460,7 @@ end
 
 -- Ends a drag: remembers where the box went and which box, if any, it is now docked against.
 local function FinishDrag(group, frame)
+    if rawget(frame, "noDrag") then frame.noDrag = nil return end -- the drag was refused in combat
     EndSackDrag(frame)
     if DockFrame() then return end
     SavePosition(group, frame)
@@ -412,6 +498,10 @@ local function MakeGroupFrame(group)
     frame.back:SetAllPoints()
     frame.back:SetColorTexture(0, 0, 0, 0.45)
     frame.title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    -- Says "this sack is out of date" during combat. Made here, ahead of time, because text can change in combat
+    -- but a new frame cannot be anchored to a sack then.
+    frame.stale = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    frame.stale:SetTextColor(1, 0.5, 0)
     -- the border of a sack set to use items on left click
     frame.edges = {}
     for _, edge in ipairs({ { "TOPLEFT", "TOPRIGHT", true }, { "BOTTOMLEFT", "BOTTOMRIGHT", true },
@@ -438,9 +528,15 @@ local function MakeGroupFrame(group)
     -- A title too long for the sack ends in "..."; hovering it shows the whole thing.
     frame.handle:SetScript("OnEnter", function(self)
         local full = state.titles[group]
-        if full and frame.title.IsTruncated and frame.title:IsTruncated() then
+        local stale = state.stale[group]
+        local cut = full and frame.title.IsTruncated and frame.title:IsTruncated()
+        if cut or stale then
             GameTooltip:SetOwner(self, "ANCHOR_TOP")
-            GameTooltip:SetText(full)
+            GameTooltip:SetText(cut and full or (state.titles[group] or ""))
+            if stale then
+                GameTooltip:AddLine("Changed during combat; this sack is rebuilt when combat ends:", 1, 0.5, 0, true)
+                for _, line in ipairs(stale) do GameTooltip:AddLine(line, 1, 1, 1) end
+            end
             GameTooltip:Show()
         end
     end)
@@ -528,6 +624,9 @@ local function FillGroup(group, items, free, special)
         frameToPlace:SetPoint("TOPLEFT", x, -y)
     end
 
+    frame.geom = { width = width, height = height, size = size, layout = layout, topSpace = topSpace, bottomSpace = bottomSpace,
+        fromRight = fromRight, fromBottom = fromBottom, count = #items, shift = shift, blankMode = blankMode, reading = reading and true or false }
+    for _, ghost in ipairs(rawget(frame, "ghosts") or {}) do ghost:Hide() end -- a full rebuild has real slots for them
     frame.title:ClearAllPoints()
     frame.handle:ClearAllPoints()
     if layout.title == "NONE" then
@@ -547,12 +646,17 @@ local function FillGroup(group, items, free, special)
         frame.handle:SetPoint(edge .. "RIGHT")
         frame.handle:SetHeight(TITLE_HEIGHT)
     end
+    local staleEdge = layout.title == "BOTTOM" and "BOTTOM" or "TOP"
+    frame.stale:ClearAllPoints()
+    frame.stale:SetPoint(staleEdge .. "RIGHT", -PADDING, staleEdge == "TOP" and -3 or 3)
+    frame.stale:SetText("")
+    state.stale[group] = nil
 
     for index, item in ipairs(items) do
         local button = frame.buttons[index] or MakeSlotButton(frame)
         frame.buttons[index] = button
         button:SetSize(size, size)
-        button.bag, button.slot = item.bag, item.slot
+        button.bag, button.slot, button.itemID, button.quality = item.bag, item.slot, item.itemID, item.quality
         button:SetAttribute("item", item.bag .. " " .. item.slot)
         -- A sack can use its items on left click, like an action bar. Dragging still picks an item up.
         button.clickUse = group.useOnClick and true or false
@@ -560,6 +664,10 @@ local function FillGroup(group, items, free, special)
             button:SetAttribute("type1", button.clickUse and "item" or nil)
         end
         button.icon:SetTexture(item.icon)
+        QuestMarker(button.quest, item)
+        button.icon:SetDesaturated(false)
+        button.gone = false
+        button.dead:Hide()
         local color = ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[item.quality]
         if color then button.back:SetColorTexture(color.r, color.g, color.b, 0.45) else button.back:SetColorTexture(0, 0, 0, 0.3) end
         button.count:SetText((item.count or 1) > 1 and item.count or "")
@@ -589,6 +697,7 @@ local function FillGroup(group, items, free, special)
     end
     for index = #items + 1, #frame.buttons do
         frame.buttons[index].bag = nil
+        frame.buttons[index].dead:Hide()
         frame.buttons[index]:Hide()
     end
 
@@ -715,6 +824,7 @@ local function PlaceGroups()
         -- An empty sack stays on screen (title and an empty box) so you can still see and move it; only a sack with
         -- nothing at all to show (no items, no empty slot, no title) goes away.
         local hidden = BlankMode(group) == "NONE" and group.title == "NONE" and (state.counts[group] or 0) == 0
+        if group.builtin and not group.always then hidden = true end -- Combat loot: only in combat, unless asked to stay
         if vendor then
             -- Beside the vendor (or bank) window, in sack-list order, filling downward to the window's height. A box that no
             -- longer fits below goes into free space beside the narrower boxes, or into a new column.
@@ -809,6 +919,14 @@ local function SortItems(group, items)
     local rank = {}
     for index, id in ipairs(group.pins or {}) do rank[id] = index end
     local keys = group.sort or DEFAULT_SORT
+    -- Whatever the steps leave tied, stacks of the same item stay together (at the place of the first one in your bags),
+    -- and only then does bag position decide, so the order is steady and identical stacks are never split up by chance.
+    local first = {}
+    for _, item in ipairs(items) do
+        local place = item.bag * 1000 + item.slot
+        local id = item.itemID or 0
+        if not first[id] or place < first[id] then first[id] = place end
+    end
     table.sort(items, function(a, b)
         local rankA, rankB = rank[a.itemID] or math.huge, rank[b.itemID] or math.huge
         if rankA ~= rankB then return rankA < rankB end
@@ -825,6 +943,8 @@ local function SortItems(group, items)
                 end
             end
         end
+        local firstA, firstB = first[a.itemID or 0], first[b.itemID or 0]
+        if firstA ~= firstB then return firstA < firstB end
         if a.bag ~= b.bag then return a.bag < b.bag end
         return a.slot < b.slot
     end)
@@ -890,10 +1010,246 @@ local function UpdateWidget(free, special)
     frame:Show()
 end
 
+-- In combat the slots cannot be moved or re-assigned, but their text can change. This re-reads the stack in each
+-- slot that is on screen, so a count goes down as you use the item instead of at the end of the fight. A slot that
+-- now holds a different item or nothing is dimmed and left where it is until the full refresh after combat.
+local function RefreshCounts()
+    for _, frame in pairs(state.frames or {}) do
+        for _, button in ipairs(rawget(frame, "buttons") or {}) do
+            if button.bag and button:IsShown() then
+                local ok, info = pcall(C_Container.GetContainerItemInfo, button.bag, button.slot)
+                if ok and type(info) == "table" and info.itemID == button.itemID then
+                    local stack = info.stackCount or 1
+                    button.count:SetText(stack > 1 and stack or "")
+                    button.icon:SetDesaturated(false)
+                    button.gone = false
+                    button.dead:Hide()
+                else
+                    button.gone = true
+                    button.dead:Show()
+                    button.count:SetText("")
+                    button.icon:SetDesaturated(true)
+                end
+                UpdateCooldown(button)
+            end
+        end
+    end
+end
+ns.RefreshCounts = RefreshCounts
+
+-- In combat a new item may have no slot to go in (the secure slots cannot be added or moved). It is drawn here as a plain,
+-- non-secure icon in the next cell of its sack's grid, where its slot will be after combat. The cells go on in the
+-- direction the sack grows, so nothing already on screen has to move; the free-slots box (a plain frame) steps aside.
+local function MakeGhost(frame)
+    local ghost = CreateFrame("Frame", nil, frame)
+    ghost:EnableMouse(true)
+    ghost.back = ghost:CreateTexture(nil, "BACKGROUND")
+    ghost.back:SetAllPoints()
+    ghost.icon = ghost:CreateTexture(nil, "ARTWORK")
+    ghost.icon:SetPoint("TOPLEFT", 2, -2)
+    ghost.icon:SetPoint("BOTTOMRIGHT", -2, 2)
+    ghost.quest = ghost:CreateTexture(nil, "OVERLAY")
+    ghost.quest:SetAllPoints()
+    ghost.quest:Hide()
+    ghost.over = CreateFrame("Frame", nil, ghost)
+    ghost.over:SetAllPoints()
+    ghost.over:SetFrameLevel(ghost:GetFrameLevel() + 2)
+    ghost.count = ghost.over:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
+    ghost.count:SetPoint("BOTTOMRIGHT", -3, 3)
+    ghost.fresh = ghost.over:CreateTexture(nil, "OVERLAY")
+    ghost.fresh:SetPoint("CENTER", ghost.icon, "CENTER")
+    ghost.fresh:SetBlendMode("ADD")
+    ghost.fresh:Hide()
+    local ok, group = pcall(ghost.fresh.CreateAnimationGroup, ghost.fresh)
+    if ok and type(group) == "table" then
+        local fade = group:CreateAnimation("Alpha")
+        fade:SetFromAlpha(1)
+        fade:SetToAlpha(0.25)
+        fade:SetDuration(0.9)
+        group:SetLooping("BOUNCE")
+        ghost.freshPulse = group
+    end
+    ghost:SetScript("OnEnter", function(self)
+        if not self.bag then return end
+        if ns.IsFresh(self.bag, self.slot) then
+            ns.ClearFresh(self.bag, self.slot)
+            ns.RefreshFresh()
+        end
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetBagItem(self.bag, self.slot)
+        GameTooltip:AddLine(" ")
+        GameTooltip:AddLine("Arrived during combat: it can be used once combat ends.", 0.7, 0.7, 0.7, true)
+        GameTooltip:Show()
+    end)
+    ghost:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+    return ghost
+end
+
+local function ShowGhosts(group, frame, pending)
+    local geom = rawget(frame, "geom")
+    frame.ghosts = rawget(frame, "ghosts") or {}
+    for _, ghost in ipairs(frame.ghosts) do ghost:Hide() end
+    if not geom or geom.reading then return end -- docked at a vendor or bank: the title marker says it
+    local size = geom.size
+    if group.builtin then
+        -- Combat loot has no real slots, so unlike the other sacks it can be resized right now to fit what it holds.
+        local layout, cells = geom.layout, math.max(1, #pending)
+        local columns, rows
+        if layout.flow == "COLUMNS" then
+            columns, rows = math.ceil(cells / layout.wrap), math.min(layout.wrap, cells)
+        else
+            columns, rows = math.min(layout.wrap, cells), math.ceil(cells / layout.wrap)
+        end
+        geom.width = PADDING * 2 + columns * size + (columns - 1) * SLOT_GAP
+        geom.height = geom.topSpace + rows * size + (rows - 1) * SLOT_GAP + geom.bottomSpace
+        frame:SetSize(geom.width, geom.height)
+        frame.title:SetWidth(math.max(12, geom.width - PADDING * 2))
+        local ok, text = pcall(ExpandTitle, group, pending, 0, 0)
+        if ok and text and geom.layout.title ~= "NONE" then frame.title:SetText(text) end
+        if #pending > 0 then frame:Show() elseif not group.always then frame:Hide() end
+    end
+    local function put(target, index)
+        local column, row = GridCell(index, geom.layout)
+        local x = column * (size + SLOT_GAP)
+        local y = row * (size + SLOT_GAP)
+        x = geom.fromRight and (geom.width - PADDING - size - x) or (PADDING + x)
+        y = geom.fromBottom and (geom.height - geom.bottomSpace - size - y) or (geom.topSpace + y)
+        target:ClearAllPoints()
+        target:SetPoint("TOPLEFT", x, -y)
+    end
+    for index, item in ipairs(pending) do
+        local ghost = frame.ghosts[index] or MakeGhost(frame)
+        frame.ghosts[index] = ghost
+        ghost:SetSize(size, size)
+        ghost.bag, ghost.slot, ghost.itemID, ghost.quality = item.bag, item.slot, item.itemID, item.quality
+        ghost.icon:SetTexture(item.icon)
+        QuestMarker(ghost.quest, item)
+        local color = ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[item.quality]
+        if color then ghost.back:SetColorTexture(color.r, color.g, color.b, 0.45) else ghost.back:SetColorTexture(0, 0, 0, 0.3) end
+        ghost.count:SetText((item.count or 1) > 1 and item.count or "")
+        put(ghost, geom.shift + geom.count + index)
+        ghost:Show()
+    end
+    if geom.blankMode == "LAST" then put(frame.blank, geom.count + #pending + 1) end
+end
+
+-- In combat the sacks cannot be rebuilt, so tell the truth about what they are missing: each sack that would
+-- gain or lose a slot gets an orange "+N -M" at its title, and its title tooltip lists the items.
+local function MarkStale(items)
+    local shown = {}
+    for _, frame in pairs(state.frames or {}) do
+        for _, button in ipairs(rawget(frame, "buttons") or {}) do
+            if button.bag and button:IsShown() and not button.gone then
+                shown[button.bag .. ":" .. button.slot .. ":" .. tostring(button.itemID)] = true
+            end
+        end
+    end
+    local news, gone, pend = {}, {}, {}
+    for _, item in ipairs(items or (ReadBags())) do
+        if not shown[item.bag .. ":" .. item.slot .. ":" .. tostring(item.itemID)] then
+            for _, group in ipairs(AllGroups()) do
+                if group.builtin or ((group.fixed or #group.rule > 0) and Matches(group.rule, item)) then
+                    news[group] = news[group] or {}
+                    pend[group] = pend[group] or {}
+                    table.insert(pend[group], item)
+                    table.insert(news[group], "+ " .. tostring(item.name) .. (item.count and item.count > 1 and " x" .. item.count or ""))
+                    break
+                end
+            end
+        end
+    end
+    for group, frame in pairs(state.frames or {}) do
+        for _, button in ipairs(rawget(frame, "buttons") or {}) do
+            if button.bag and button:IsShown() and button.gone then
+                gone[group] = gone[group] or {}
+                local seen = SacksDB.seen and SacksDB.seen[button.itemID]
+                table.insert(gone[group], "- " .. tostring(seen and seen.name or button.itemID) .. " (used up or moved)")
+            end
+        end
+    end
+    state.stale = {}
+    for group, frame in pairs(state.frames or {}) do
+        local mark = rawget(frame, "stale") -- the free-slots widget is in this list too and has none
+        local added, removed = news[group] or {}, gone[group] or {}
+        if rawget(frame, "stale") then ShowGhosts(group, frame, pend[group] or {}) end -- the new ones are drawn, so they need no count
+        if not mark then
+            -- nothing to write on
+        elseif #added + #removed > 0 then
+            local lines = {}
+            for _, line in ipairs(added) do lines[#lines + 1] = line end
+            for _, line in ipairs(removed) do lines[#lines + 1] = line end
+            state.stale[group] = lines
+            mark:SetText(#removed > 0 and ("-" .. #removed) or "")
+        else
+            mark:SetText("")
+        end
+    end
+end
+ns.MarkStale = MarkStale
+
+---------------------------------------------------------------------------------------------------
+-- New items
+---------------------------------------------------------------------------------------------------
+
+-- An item is new when the game says so (C_NewItems), exactly as the default bags do, so the two stay in step:
+-- hovering an item here clears it there, and hovering it there clears it here (the game tells us when its flags change).
+local function IsFresh(bag, slot)
+    return C_NewItems and C_NewItems.IsNewItem and C_NewItems.IsNewItem(bag, slot) and true or false
+end
+local function ClearFresh(bag, slot)
+    if C_NewItems and C_NewItems.RemoveNewItem then pcall(C_NewItems.RemoveNewItem, bag, slot) end
+end
+ns.IsFresh, ns.ClearFresh = IsFresh, ClearFresh
+
+local function AtlasExists(name)
+    if C_Texture and C_Texture.GetAtlasInfo then return C_Texture.GetAtlasInfo(name) ~= nil end
+    return false
+end
+
+local function RefreshFresh()
+    for _, frame in pairs(state.frames or {}) do
+        local all = {}
+        for _, button in ipairs(rawget(frame, "buttons") or {}) do all[#all + 1] = button end
+        for _, ghost in ipairs(rawget(frame, "ghosts") or {}) do if ghost:IsShown() then all[#all + 1] = ghost end end
+        for _, button in ipairs(all) do
+            local glow = rawget(button, "fresh")
+            if glow then
+                if rawget(button, "bag") and not rawget(button, "gone") and IsFresh(button.bag, button.slot) then
+                    -- the same texture the default bags use for this quality, when this client has it
+                    local named = NEW_ITEM_ATLAS_BY_QUALITY and NEW_ITEM_ATLAS_BY_QUALITY[button.quality]
+                    local atlas = (named and AtlasExists(named) and named) or (AtlasExists("bags-glow-white") and "bags-glow-white") or nil
+                    if atlas then
+                        glow:SetAtlas(atlas, true)
+                        glow:SetVertexColor(1, 1, 1)
+                    else
+                        -- no such art here: a plain white edge glow from a texture every client has
+                        glow:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
+                        glow:SetSize(SlotSize() * 1.8, SlotSize() * 1.8)
+                    end
+                    glow:Show()
+                    if button.freshPulse and not button.freshPulse:IsPlaying() then button.freshPulse:Play() end
+                else
+                    glow:Hide()
+                    if button.freshPulse then button.freshPulse:Stop() end
+                end
+            end
+        end
+    end
+end
+ns.RefreshFresh = RefreshFresh
+
 local function Refresh()
     if not SacksDB then return end
     if InCombatLockdown() then
         state.pending = true -- secure buttons can't be changed in combat; redo it when combat ends
+        pcall(RefreshCounts) -- but what each slot shows can be brought up to date now
+        pcall(function()
+            local items = ReadBags()
+            MarkStale(items) -- what it cannot show yet is flagged
+            RefreshFresh()
+        end)
         if ns.RefreshSettings then pcall(ns.RefreshSettings) end
         return
     end
@@ -934,6 +1290,7 @@ local function Refresh()
     end
     PlaceGroups()
     UpdateWidget(free, special)
+    RefreshFresh()
     if ns.RefreshSettings then pcall(ns.RefreshSettings) end
 end
 state.refresh = Refresh

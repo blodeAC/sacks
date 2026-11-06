@@ -132,7 +132,7 @@ ICON_SIZE = SlotSize() - 3
 
 -- RefreshSettings and ToggleSettings are defined with the settings window (Window.lua) and called through ns
 
-local state = { frames = {}, counts = {}, titles = {}, vendor = false, pending = false, items = {}, selected = {} }
+local state = { frames = {}, counts = {}, titles = {}, stale = {}, vendor = false, pending = false, items = {}, selected = {} }
 
 -- shared with the files after this one
 ns.BUTTON_HEIGHT = BUTTON_HEIGHT

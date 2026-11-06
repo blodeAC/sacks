@@ -38,14 +38,14 @@ local function ToggleOwnBags()
     if OwnBagsShown() then
         state.ownBagsAllowed = false
         if CloseAllBags then
-            pcall(CloseAllBags)
+            (securecall or pcall)(CloseAllBags)
         else
             for _, frame in ipairs(OwnBagFrames()) do pcall(frame.Hide, frame) end
         end
     else
         state.ownBagsAllowed = true
         local open = OpenAllBags or ToggleAllBags
-        if open then pcall(open) end
+        if open then (securecall or pcall)(open) end -- securecall: the game opens them without this add-on's taint
     end
 end
 
@@ -54,7 +54,10 @@ local function HookOwnBags()
     for _, frame in ipairs(OwnBagFrames()) do
         if not hooked[frame] then
             hooked[frame] = true
-            frame:HookScript("OnShow", HideOwnBags)
+            -- one frame later, so the post-hooks below can say it was the player's own toggle first
+            frame:HookScript("OnShow", function()
+                if C_Timer and C_Timer.After then C_Timer.After(0, HideOwnBags) else HideOwnBags() end
+            end)
             frame:HookScript("OnHide", function()
                 if not OwnBagsShown() then state.ownBagsAllowed = false end
             end)
@@ -63,22 +66,23 @@ local function HookOwnBags()
 end
 
 -- The game opens its own bags by itself at vendors, mail and so on. Those are blocked; B and the bag buttons go
--- through these three functions, so anything they open is the player's own doing and is left open.
+-- through these three functions, so anything they open is the player's own doing and is left open. They are only
+-- hooked after the fact (hooksecurefunc), never replaced: replacing a game function makes everything it does
+-- "tainted", and the game then refuses to use an item clicked in its own bags.
 local function WrapUserBagToggles()
+    if state.wrapped or not hooksecurefunc or not (C_Timer and C_Timer.After) then return end
+    state.wrapped = true
     for _, name in ipairs({ "ToggleAllBags", "ToggleBackpack", "ToggleBag" }) do
-        local original = _G[name]
-        if type(original) == "function" and not state.wrapped then
-            _G[name] = function(...)
-                state.userBags = true
-                local results = { pcall(original, ...) }
-                state.userBags = false
-                if OwnBagsShown() then state.ownBagsAllowed = true end
-                if not results[1] then error(results[2], 0) end
-                return unpack(results, 2)
-            end
+        if type(_G[name]) == "function" then
+            hooksecurefunc(name, function()
+                state.userBags = true -- seen by the bag-hiding check, which runs one frame after the bags appeared
+                C_Timer.After(0, function()
+                    state.userBags = false
+                    if OwnBagsShown() then state.ownBagsAllowed = true end
+                end)
+            end)
         end
     end
-    state.wrapped = true
 end
 
 -- shared with the files after this one

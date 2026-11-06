@@ -24,9 +24,16 @@ local function EditedGroup()
     return state.editing
 end
 
+-- The sacks in the list that are always there and cannot be deleted are written in yellow: Other and Combat loot.
+local BUILT_IN = { 1, 0.82, 0 }
+local BUILT_IN_NOTE = " (built in)" -- said in words too, in case the colour is missed
+ns.BUILT_IN_NOTE = BUILT_IN_NOTE
+
 local function SackOptions()
     local options = {}
-    for _, group in ipairs(AllGroups()) do options[#options + 1] = { label = group.name, value = group } end
+    for _, group in ipairs(AllGroups()) do
+        options[#options + 1] = { label = group.name .. ((group.fixed or group.builtin) and BUILT_IN_NOTE or ""), value = group, color = (group.fixed or group.builtin) and BUILT_IN or nil }
+    end
     return options
 end
 
@@ -140,16 +147,19 @@ local function BuildLayout(window)
     end
     header("This sack")
     MakeText(page, "GameFontHighlight", "TOPLEFT", 0, -(y + mid(DROPDOWN_HEIGHT))):SetText("Editing sack:")
+    local listWidth = WIDE
+    for _, option in ipairs(SackOptions()) do listWidth = math.max(listWidth, math.ceil(TextWidth(option.label)) + 2 * DROPDOWN_INSET) end
     page.sackChoice = MakeChoice(page, nil, math.ceil(TextWidth("Editing sack:", "GameFontHighlight")) + PADDING, -y, SackOptions, function()
         state.editing = page.sackChoice.value()
         ns.RefreshSettings()
-    end, WIDE)
+    end, listWidth)
     -- Copy another sack's settings onto this one, a section at a time (not its rule, items, pins or position).
     -- Both sit at the right edge: the box is as wide as the others, its label just to the left of it.
     local function copyChoice(label, top, copy, what)
         local x = FULL - WIDE - ns.DROPDOWN_RIGHT
-        MakeText(page, "GameFontHighlight", "TOPLEFT", x - PADDING - math.ceil(TextWidth(label, "GameFontHighlight")),
-            -(top + mid(DROPDOWN_HEIGHT))):SetText(label)
+        local copyLabel = MakeText(page, "GameFontHighlight", "TOPLEFT", x - PADDING - math.ceil(TextWidth(label, "GameFontHighlight")),
+            -(top + mid(DROPDOWN_HEIGHT)))
+        copyLabel:SetText(label)
         local choice
         choice = MakeChoice(page, nil, x, -top, function()
             local options = { { label = "Choose a sack..." } }
@@ -166,6 +176,7 @@ local function BuildLayout(window)
             Say("copied the " .. what .. " of " .. source.name .. " onto " .. target.name)
             Refresh()
         end, WIDE)
+        choice.label = copyLabel
         return choice
     end
     local function copyLayout(source, target)
@@ -219,6 +230,14 @@ local function BuildLayout(window)
         EditedGroup().blank = page.blank.value()
         Refresh()
     end, LAYOUT_WIDTH)
+    -- The Combat loot sack has no empty slot, so the same place holds its checkbox: it is otherwise only on screen in combat.
+    page.emptyCheck = MakeCheck(page, "Always show it (to place it)", function(self)
+        EditedGroup().always = self:GetChecked() and true or nil
+        Refresh()
+    end)
+    -- right edge in line with the dropdowns above it; the box plus its measured label decide where it starts
+    local checkWidth = CHECK_SIZE + 2 + math.ceil(TextWidth("Always show it (to place it)", "GameFontHighlight"))
+    page.emptyCheck:SetPoint("TOPLEFT", FULL - ns.DROPDOWN_RIGHT - checkWidth, -(y + mid(DROPDOWN_HEIGHT) - CHECK_SIZE / 2))
     y = y + math.max(LINE_HEIGHT, DROPDOWN_HEIGHT) + PADDING
 
     MakeText(page, "GameFontHighlight", "TOPLEFT", 0, -y):SetText("Title text")
@@ -502,6 +521,8 @@ local function RefreshLayout()
     page.blank.show(group.fixed and true or false)
     if group.fixed then page.blankLabel:Show() else page.blankLabel:Hide() end
     page.blank.select(group.blank or "LAST")
+    if group.builtin then page.emptyCheck:Show() else page.emptyCheck:Hide() end
+    page.emptyCheck:SetChecked(group.always and true or false)
     local titleText = group.titleText or TITLE_DEFAULT
     if page.titleEdit:GetText() ~= titleText then page.titleEdit:SetText(titleText) end
     page.titlePreview:SetText("Preview: " .. ((group.title ~= "NONE" and state.titles[group]) or "(title hidden)") .. "   (longer than the sack: clipped with ..., full text on hover)")
