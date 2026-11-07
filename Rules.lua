@@ -325,14 +325,21 @@ local function ClauseParts(condition, rule)
     return FIELD_TEXT[condition.field] or STATS[condition.field].text, OP_TEXT[condition.op], ValueText(condition, rule)
 end
 
-local function Describe(rule)
-    local text = ""
+-- A rule as one piece of text per line: "class is Trade Goods", then "and subclass is Cloth" or "or ..." for the lines after it.
+-- Describe is these joined by spaces, so a tooltip that shows them one to a line says exactly what the sentence says.
+local function ClauseLines(rule)
+    local lines = {}
     for index, condition in ipairs(rule) do
-        if index > 1 then text = text .. (condition.join == "OR" and "  OR  " or " and ") end
         local field, op, value = ClauseParts(condition, rule)
-        text = text .. field .. " " .. op .. " " .. value
+        local lead = index == 1 and "" or ((condition.join == "OR" and "or" or "and") .. " ")
+        lines[#lines + 1] = lead .. field .. " " .. op .. " " .. value
     end
-    return text ~= "" and text or "everything else"
+    return lines
+end
+
+local function Describe(rule)
+    local lines = ClauseLines(rule)
+    return #lines > 0 and table.concat(lines, " ") or "everything else"
 end
 
 local SACK_COLUMN_X = -300 -- the starting sacks sit in one column this far left of the screen centre
@@ -416,6 +423,7 @@ ns.RuleFields = RuleFields
 ns.AllGroups = AllGroups
 ns.DefaultGroups = DefaultGroups
 ns.ClauseParts = ClauseParts
+ns.ClauseLines = ClauseLines
 ns.Describe = Describe
 ns.EnsureFallback = EnsureFallback
 ns.FindGroup = FindGroup

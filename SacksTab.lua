@@ -90,17 +90,11 @@ local function MakeRowButtons(row)
     row.up:SetPoint("RIGHT", row.down, "LEFT", -SLOT_GAP, 0)
 end
 
--- What a sack takes, one line to a line of its rule: "Take if", "and" or "or", then what is tested, how, and against what,
--- in the colours of the Items tab. A sack with no lines of its own just has its sentence.
+-- What a sack takes, one line to a line of its rule, in the very words of the row's sentence (see ClauseLines in Rules.lua).
+-- A sack with no lines of its own just has its sentence.
 local function RuleLines(group, sentence)
     if group.builtin or group.fixed or #group.rule == 0 then return { sentence } end
-    local lines = {}
-    for index, condition in ipairs(group.rule) do
-        local field, op, value = ns.ClauseParts(condition, group.rule)
-        local lead = index == 1 and "Take if" or (condition.join == "OR" and "or" or "and")
-        lines[#lines + 1] = string.format("|cff999999%s|r |cffffd100%s|r |cffcccccc%s|r %s", lead, field, op, (value:gsub("|", "||")))
-    end
-    return lines
+    return ns.ClauseLines(group.rule)
 end
 
 -- True when a one-line text is wider than the room it is given, so the end of it is not visible.
@@ -144,9 +138,12 @@ local function MakeRow(parent)
         if descCut then
             for _, line in ipairs(RuleLines(self.group, self.desc:GetText())) do lines[#lines + 1] = line end
         end
-        for index, line in ipairs(lines) do
-            if index == 1 then GameTooltip:SetText(line, 1, 1, 1, 1, true) else GameTooltip:AddLine(line, 1, 1, 1, true) end
-        end
+        -- in the colour of the row's own text
+        local r, g, b = self.desc:GetTextColor()
+        for _, line in ipairs(lines) do GameTooltip:AddLine((line:gsub("|", "||")), r or 1, g or 1, b or 1, true) end
+        -- The game draws a tooltip's first line in the larger title font however it is added; put it in the same font as the rest.
+        local first, plain = _G.GameTooltipTextLeft1, _G.GameTooltipText
+        if first and plain and first.SetFontObject then first:SetFontObject(plain) end
         GameTooltip:Show()
     end)
     row:SetScript("OnLeave", function(self)
