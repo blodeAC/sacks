@@ -397,6 +397,10 @@ local function BuildSackPicker(page, L)
         page.copySort = MakeCopyChoice(page, L, "Copy order from:", top, CopySortOrder, "sort order")
     end
     L.y = L.y + DROPDOWN_HEIGHT + PADDING
+    -- for a sack that ended up off screen or under something
+    page.resetPosition = MakeButton(page, "Move to the middle of the screen", nil, function() ns.ResetPosition(EditedGroup()) end)
+    page.resetPosition:SetPoint("TOPLEFT", 0, -L.y)
+    L.y = L.y + BUTTON_HEIGHT + PADDING
 end
 
 -- Which corner the sack grows from, how it fills, where its title goes.

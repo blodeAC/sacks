@@ -9,6 +9,19 @@ function ns.LogClick(button, mouse, down, atVendor)
         down and "down" or "up", tostring(button.clickUse), tostring(button:GetAttribute("type1")), tostring(button:GetAttribute("type2")),
         tostring(button:GetAttribute("useOnKeyDown")), tostring(button:GetAttribute("item")), tostring(button.bag), tostring(button.slot),
         tostring(atVendor and true or false), tostring(InCombatLockdown and InCombatLockdown() or false)))
+    -- what the game says about an item-targeting cursor (a crate waiting for an item to fill it) and about the cursor
+    local function Ask(name, fn, ...)
+        if not fn then return name .. "=missing" end
+        local ok, value = pcall(fn, ...)
+        return name .. "=" .. (ok and tostring(value) or "err")
+    end
+    Say("  item " .. tostring(button.itemID) .. ": " .. Ask("SpellCanTargetItemID", SpellCanTargetItemID, button.itemID))
+    local cursor = GetCursorInfo and { GetCursorInfo() } or {}
+    Say(string.format("  cursor: %s %s %s %s %s | modifiers: shift=%s split=%s | stacksplit=%s", Ask("SpellIsTargeting", SpellIsTargeting),
+        Ask("SpellCanTargetItem", SpellCanTargetItem), Ask("CursorHasItem", CursorHasItem), "type=" .. tostring(cursor[1]),
+        "id=" .. tostring(cursor[2]), tostring(IsShiftKeyDown and IsShiftKeyDown()),
+        tostring(IsModifiedClick and IsModifiedClick("SPLITSTACK")), tostring(StackSplitFrame and StackSplitFrame.OpenStackSplitFrame and "method"
+        or OpenStackSplitFrame and "global" or "none")))
 end
 
 function ns.commands.clicks()

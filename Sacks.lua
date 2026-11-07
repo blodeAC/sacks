@@ -201,6 +201,7 @@ local function FillSlot(button, item, group, size)
     button.icon:SetDesaturated(false)
     button.gone = false
     button.dead:Hide()
+    ns.ApplyTargetDim(button)
     TintByQuality(button.back, item.quality)
     button.count:SetText((item.count or 1) > 1 and item.count or "")
     if item.inSpecial then
@@ -303,13 +304,18 @@ local function FillGroup(group, items, free, special)
 end
 
 -- An optional box of its own that shows the free slots, to put anywhere (or dock against a sack).
+-- Where the free-slots box starts (and where its reset puts it): a little below the middle, clear of a new sack.
+local WIDGET_START = { point = "CENTER", x = 0, y = -220 }
 local function WidgetGroup()
-    SacksDB.widget = SacksDB.widget or { name = "Free slots", shown = false, point = "CENTER", x = 0, y = -220 }
+    SacksDB.widget = SacksDB.widget or { name = "Free slots", shown = false, point = WIDGET_START.point, x = WIDGET_START.x, y = WIDGET_START.y }
     return SacksDB.widget
 end
 
 local function MakeWidget(group)
     local frame = CreateFrame("Frame", "SacksFreeWidget", UIParent)
+    -- Above the settings window, so the box is not hidden behind it while you place it.
+    frame:SetFrameStrata("DIALOG")
+    frame:SetFrameLevel(100)
     frame:SetMovable(true)
     frame:SetClampedToScreen(true)
     frame:EnableMouse(true)
@@ -469,6 +475,15 @@ local function CreateSack(name, rule)
 end
 
 
+-- Puts a sack (or the free-slots box) back where a new one starts: undocked, in the middle of the screen. The box starts
+-- a little lower so it does not sit on top of a new sack.
+local function ResetPosition(group)
+    local start = (group == SacksDB.widget) and WIDGET_START or { point = "CENTER", x = 0, y = 0 }
+    group.point, group.relPoint, group.relativeTo, group.dock = start.point, nil, nil, nil
+    group.x, group.y = start.x, start.y
+    Refresh()
+end
+ns.ResetPosition = ResetPosition
 ns.CreateSack = CreateSack
 ns.HideRemoved = HideRemoved
 ns.Refresh = Refresh

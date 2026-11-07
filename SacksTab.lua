@@ -202,6 +202,9 @@ local function BuildBagOptions(page)
         Refresh()
     end)
     page.widgetCheck:SetPoint("TOPLEFT", -SLOT_GAP, -(SLOT_GAP + CHECK_SIZE + PADDING))
+    -- brings the box back to a place you can see, if you lose it
+    page.widgetReset = ns.MakeButton(page, "Reset position", nil, function() ns.ResetPosition(WidgetGroup()) end)
+    page.widgetReset:SetPoint("LEFT", page.widgetCheck.label, "RIGHT", PADDING * 2, 0)
     -- Sacks that use items on left click are marked in this colour (title and border), so they stand out.
     local markY = SLOT_GAP + CHECK_SIZE + PADDING
     page.clickColor = MakeChoice(page, nil, 0, -markY, function() return ns.CLICK_COLORS end, function()

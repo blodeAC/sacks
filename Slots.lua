@@ -90,6 +90,27 @@ ns.UpdateCooldowns = UpdateCooldowns
 
 -- What clicking and dragging a slot does. Right click uses the item (and sells it at a vendor); the rest is in the
 -- comments below. These are secure attributes and scripts, so a slot is set up once and never rebuilt in combat.
+-- Shift-click (and the other modified clicks) on an item: link it into chat or preview it, like the game's bags do,
+-- otherwise open the stack splitter. Returns true when the click was used up.
+local DIM_ALPHA = 0.65 -- how dark an item that cannot be used on the waiting item is drawn
+
+local function ModifiedClick(button)
+    if not button.bag then return false end
+    local getLink = (C_Container and C_Container.GetContainerItemLink) or GetContainerItemLink
+    local link = getLink and getLink(button.bag, button.slot)
+    if link and HandleModifiedItemClick and HandleModifiedItemClick(link) then return true end
+    if not (IsModifiedClick and IsModifiedClick("SPLITSTACK")) or (CursorHasItem and CursorHasItem()) then return false end
+    local open = (StackSplitFrame and StackSplitFrame.OpenStackSplitFrame
+        and function(...) return StackSplitFrame:OpenStackSplitFrame(...) end) or OpenStackSplitFrame
+    local info = Container.GetContainerItemInfo and Container.GetContainerItemInfo(button.bag, button.slot)
+    local count = type(info) == "table" and info.stackCount or 0
+    if open and count > 1 and not info.isLocked then
+        open(count, button, "BOTTOMRIGHT", "TOPRIGHT")
+        return true
+    end
+    return false
+end
+
 local function SetUpSlotClicks(button)
     -- Right click uses the item (and sells it at a vendor). Left click and dragging pick it up, like the game's bags,
     -- unless the sack is set to use items on left click (then only dragging picks up).
@@ -106,6 +127,25 @@ local function SetUpSlotClicks(button)
             -- A sack set to use items on left click behaves like the game's bags at a vendor: no use, only pick up.
             self:SetAttribute("type1", nil)
             self.leftOff = true
+        end
+        -- An item waiting for a target (a crate to fill, for example): clicking a slot hands it that item, as the game's
+        -- bags do. Picking the item up instead would cancel the targeting.
+        if mouse == "LeftButton" and not down and self.bag and not (InCombatLockdown and InCombatLockdown())
+            and SpellCanTargetItem and SpellCanTargetItem() then
+            if self.clickUse then
+                self:SetAttribute("type1", nil)
+                self.leftOff = true
+            end
+            local use = (C_Container and C_Container.UseContainerItem) or UseContainerItem
+            if use then use(self.bag, self.slot) end
+            return
+        end
+        if mouse == "LeftButton" and not down and not (InCombatLockdown and InCombatLockdown()) and ModifiedClick(self) then
+            if self.clickUse then   -- a modified click must not also use the item
+                self:SetAttribute("type1", nil)
+                self.leftOff = true
+            end
+            return
         end
         if mouse == "LeftButton" and not down and self.bag and (not self.clickUse or self.leftOff) then
             Container.PickupContainerItem(self.bag, self.slot)
@@ -133,6 +173,11 @@ local function SetUpSlotClicks(button)
             self:SetAttribute("type2", "item")
         end
     end)
+    -- the stack splitter calls this with the amount chosen
+    button.SplitStack = function(self, amount)
+        local split = (C_Container and C_Container.SplitContainerItem) or SplitContainerItem
+        if split and self.bag then split(self.bag, self.slot, amount) end
+    end
     button:SetScript("OnDragStart", function(self)
         if self.bag and not (CursorHasItem and CursorHasItem()) then Container.PickupContainerItem(self.bag, self.slot) end
     end)
@@ -173,6 +218,11 @@ local function AddSlotLayers(button)
     button.count:SetPoint("BOTTOMRIGHT", -3, 3)
     -- A small square in the top corner: green when the item is in a special bag, amber when it fits a special bag
     -- that has room but sits in a normal bag, grey when it fits one that is full.
+    -- Over the item art while an item waits for a target (a crate to fill) and this item is not one it can take.
+    button.dim = button:CreateTexture(nil, "OVERLAY")
+    button.dim:SetAllPoints(button.icon)
+    button.dim:SetColorTexture(0, 0, 0, DIM_ALPHA)
+    button.dim:Hide()
     button.mark = button:CreateTexture(nil, "OVERLAY")
     button.mark:SetSize(math.max(2, math.floor(ns.SlotSize() / 5)), math.max(2, math.floor(ns.SlotSize() / 5)))
     button.mark:SetPoint("TOPRIGHT", -2, -2)
@@ -207,6 +257,33 @@ local function SetUpSlotTooltip(button)
         if ResetCursor then ResetCursor() end
     end)
 end
+
+-- While an item waits for a target (a crate to fill), the game's bags dim what it cannot take. Same here, driven by the
+-- game's own answer for each item.
+local function TargetingItems()
+    return (SpellIsTargeting and SpellIsTargeting() and SpellCanTargetItem and SpellCanTargetItem() and SpellCanTargetItemID) and true or false
+end
+
+local function ApplyTargetDim(button, targeting)
+    if targeting == nil then targeting = TargetingItems() end
+    local dim = false
+    if targeting and button.bag and button.itemID then
+        local ok, valid = pcall(SpellCanTargetItemID, button.itemID)
+        dim = ok and not valid
+    end
+    if dim then button.dim:Show() else button.dim:Hide() end
+end
+ns.ApplyTargetDim = ApplyTargetDim
+
+local function UpdateTargetDim()
+    local targeting = TargetingItems()
+    for _, frame in pairs(state.frames) do
+        for _, button in ipairs(rawget(frame, "buttons") or {}) do
+            if button:IsShown() then ApplyTargetDim(button, targeting) end
+        end
+    end
+end
+ns.UpdateTargetDim = UpdateTargetDim
 
 local function MakeSlotButton(parent)
     local button = CreateFrame("Button", nil, parent, "SecureActionButtonTemplate")

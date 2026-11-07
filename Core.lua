@@ -68,12 +68,30 @@ end)
 
 ns.OnEvent("BAG_UPDATE_DELAYED", Refresh)
 ns.OnEvent("BAG_UPDATE_COOLDOWN", function() ns.UpdateCooldowns() end)
+-- An item waiting for a target (a crate to fill) starts or stops: dim or restore the slots that cannot take it.
+ns.OnEvent("CURRENT_SPELL_CAST_CHANGED", function() ns.UpdateTargetDim() end)
 
 ns.OnEvent("PLAYER_REGEN_ENABLED", function()
     if state.pending then Refresh() end
 end)
 
 ns.OnEvent("MERCHANT_SHOW", function() state.vendor = true; Refresh() end)
+
+-- The game lays its windows out again whenever one opens or closes; right after, the vendor window goes back past the
+-- others, so the sacks beside it are never covered by the character or professions window. It runs straight away, in the
+-- same frame as the game's layout, so the default arrangement is never drawn; and once more a frame later, in case the
+-- game had not finished (a second run changes nothing when the windows are already in order).
+local function SettleVendor()
+    if not state.vendor then return end
+    ns.KeepVendorLast()
+    if C_Timer and C_Timer.After then C_Timer.After(0, ns.KeepVendorLast) end
+end
+ns.OnEvent("MERCHANT_SHOW", SettleVendor)
+if hooksecurefunc then
+    for _, name in ipairs({ "ShowUIPanel", "HideUIPanel" }) do
+        if _G[name] then hooksecurefunc(name, SettleVendor) end
+    end
+end
 ns.OnEvent("MERCHANT_CLOSED", function() state.vendor = false; Refresh() end)
 
 ns.OnEvent("BANKFRAME_OPENED", function()

@@ -296,6 +296,63 @@ local function PlaceGroups()
 end
 
 
+-- The game opens windows side by side: the newest at the left, the ones already open pushed to the right. A vendor opened
+-- while the character or professions window is up therefore lands at the left, with that window between it and the free
+-- screen. Packs the windows the other way round: the others slide left into the vendor's place, in the order they were in,
+-- and the vendor goes after them, so the sacks beside it always have room. The game lays the windows out again whenever
+-- one opens or closes; this runs again then.
+local function KeepVendorLast()
+    local vendor = MerchantFrame
+    if not (state.vendor and vendor and vendor.IsShown and vendor:IsShown()) then return end
+    if InCombatLockdown and InCombatLockdown() then return end
+    if not (UIPanelWindows and UIParent and UIParent.GetEffectiveScale and vendor.GetEffectiveScale) then return end
+    local uiScale = UIParent:GetEffectiveScale()
+    if type(uiScale) ~= "number" or uiScale <= 0 then return end
+    local pixel = 1 / uiScale -- one screen pixel in the screen's units: edges that close count as the same edge
+    -- a window's left, right and bottom edge, in the screen's own units
+    local function Edges(frame)
+        local scale = frame.GetEffectiveScale and frame:GetEffectiveScale()
+        local left, right = frame.GetLeft and frame:GetLeft(), frame.GetRight and frame:GetRight()
+        local bottom = frame.GetBottom and frame:GetBottom()
+        if not (type(scale) == "number" and scale > 0 and type(left) == "number" and type(right) == "number"
+            and type(bottom) == "number") then return nil end
+        local k = scale / uiScale
+        return left * k, right * k, bottom * k
+    end
+    local function MoveTo(frame, left, bottom) -- in the screen's units
+        local k = uiScale / frame:GetEffectiveScale()
+        frame:ClearAllPoints()
+        frame:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", left * k, bottom * k)
+    end
+    local vLeft, vRight, vBottom = Edges(vendor)
+    if not vLeft then return end
+    -- the windows pushed to the right of the vendor
+    local others, minLeft, farRight = {}, nil, nil
+    for name, info in pairs(UIPanelWindows) do
+        local frame = _G[name]
+        if frame and frame ~= vendor and type(info) == "table" and info.area ~= "fullscreen"
+            and frame.IsShown and frame:IsShown() then
+            local left, right, bottom = Edges(frame)
+            if left and left >= vLeft - pixel then
+                -- the window's tabs stick out past its right edge; the vendor must go beyond them too
+                local reach = right + Overhang(frame) * (frame:GetEffectiveScale() / uiScale)
+                others[#others + 1] = { frame = frame, left = left, bottom = bottom }
+                minLeft = math.min(minLeft or left, left)
+                farRight = math.max(farRight or reach, reach)
+            end
+        end
+    end
+    if #others == 0 then return end
+    -- the others slide left by this much; the vendor goes after them, the same distance from what sticks out as the sacks keep
+    local shift = minLeft - vLeft
+    local vendorLeft = farRight - shift + PADDING
+    local screen = UIParent.GetWidth and UIParent:GetWidth()
+    if type(screen) == "number" and vendorLeft + (vRight - vLeft) > screen then return end -- no room at the right
+    for _, other in ipairs(others) do MoveTo(other.frame, other.left - shift, other.bottom) end
+    MoveTo(vendor, vendorLeft, vBottom)
+end
+ns.KeepVendorLast = KeepVendorLast
+
 ns.BeginSackDrag = BeginSackDrag
 ns.DockFrame = DockFrame
 ns.FinishDrag = FinishDrag
