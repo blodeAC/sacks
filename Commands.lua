@@ -103,8 +103,6 @@ local HELP = {
     "/sacks bags - open or close the game's own bags",
     "/sacks errors - the last errors this add-on raised (kept across reloads); /sacks errors clear empties it",
     "/sacks counts - record bag/cast events and the counts the game reports (show, clear); for finding out why a count lags in combat",
-    "/sacks deadtest [bare] - point the first slot at an empty bag slot to test clicks on used-up items (see its notes)",
-    "/sacks ghosttest - what a plain frame may do beside a sack in combat (run once out of combat, once in)",
     "/sacks reset - back to the starting sacks",
     "Drag a sack by its title bar to move it.",
 }
@@ -186,102 +184,6 @@ function commands.errors(args)
     end
 end
 
--- Prints what every click on a sack's item does (for finding out why a click does nothing).
-function commands.clicks()
-    state.debugClicks = not state.debugClicks
-    Say("click log " .. (state.debugClicks and "on: click an item and read the lines below" or "off"))
-end
-
--- Records bag and cast events with the counts the game reports, for finding out why a count lags in combat.
---   /sacks counts          turn recording on or off
---   /sacks counts show     print what was recorded (do this out of combat)
---   /sacks counts clear    forget it
-function commands.counts(args)
-    SacksDB.countLog = SacksDB.countLog or {}
-    local rest = (args[1] or ""):lower()
-    if rest == "show" then
-        for _, line in ipairs(SacksDB.countLog) do Say(line) end
-        Say(#SacksDB.countLog .. " lines (also saved in SacksDB.countLog)")
-    elseif rest == "clear" then
-        SacksDB.countLog = {}
-        Say("count log cleared")
-    else
-        state.debugCounts = not state.debugCounts
-        Say("count log " .. (state.debugCounts and "on: drink a potion in combat, then /sacks counts show out of combat" or "off"))
-    end
-end
-
--- Reproduces "click a slot whose item is gone" without needing to use up an item. The first slot on screen is pointed
--- at an empty bag slot (what a used-up item leaves behind). With "bare" nothing covers it, so a right-click should
--- raise the game's own error; without it the click-blocking cover is on, so a right-click should do nothing.
--- Any bag change puts the slot back to normal.
-function commands.deadtest(args)
-    if InCombatLockdown() then return Say("do this out of combat") end
-    local target, sack
-    for group, frame in pairs(state.frames or {}) do
-        for _, button in ipairs(rawget(frame, "buttons") or {}) do
-            if not target and button.bag and button:IsShown() then target, sack = button, group end
-        end
-    end
-    if not target then return Say("no slot on screen to test with") end
-    local emptyBag, emptySlot
-    for bag = 0, 4 do
-        for slot = 1, C_Container.GetContainerNumSlots(bag) or 0 do
-            if not emptyBag and not C_Container.GetContainerItemInfo(bag, slot) then emptyBag, emptySlot = bag, slot end
-        end
-    end
-    if not emptyBag then return Say("no empty bag slot to point at") end
-    target:SetAttribute("item", emptyBag .. " " .. emptySlot)
-    if (args[1] or "") == "bare" then target.dead:Hide() else target.dead:Show() end
-    local name = target.itemID and C_Item and C_Item.GetItemNameByID and C_Item.GetItemNameByID(target.itemID) or tostring(target.itemID)
-    target.icon:SetDesaturated(true) -- the test slot is greyed so you can see which one it is
-    Say(string.format("TEST SLOT: the greyed %s, in the sack \"%s\". It now points at an empty bag slot; cover %s.",
-        tostring(name), tostring(sack and sack.name or "?"), (args[1] or "") == "bare" and "OFF" or "ON"))
-    Say((args[1] or "") == "bare" and "Right-click that greyed slot now. The game should show its error; then /sacks errors."
-        or "Right-click that greyed slot now. Nothing should happen; then /sacks errors should show nothing new.")
-end
-
--- Finds out what a plain (non-secure) frame is allowed to do next to a sack in combat: be created, be anchored to
--- a sack, be moved, be shown, be a child of a sack. Run it once out of combat and once in combat and compare.
-function commands.ghosttest()
-    local sack
-    for _, frame in pairs(state.frames or {}) do
-        if not sack and frame:IsShown() then sack = frame end
-    end
-    if not sack then return Say("no sack on screen") end
-    local combat = InCombatLockdown() and "IN combat" or "out of combat"
-    local function Step(label, call)
-        local ok, problem = pcall(call)
-        Say(string.format("%s, %s: %s", combat, label, ok and "ok" or ("BLOCKED " .. tostring(problem))))
-    end
-    local ghost = state.ghost
-    Step("create a frame", function()
-        if not ghost then
-            ghost = CreateFrame("Frame", nil, UIParent)
-            ghost:SetSize(24, 24)
-            ghost.back = ghost:CreateTexture(nil, "BACKGROUND")
-            ghost.back:SetAllPoints()
-            ghost.back:SetColorTexture(1, 0.5, 0, 1)
-            state.ghost = ghost
-        end
-    end)
-    if not ghost then return end
-    Step("anchor it under the sack", function() ghost:ClearAllPoints(); ghost:SetPoint("TOPLEFT", sack, "BOTTOMLEFT", 0, -2) end)
-    Step("show it", function() ghost:Show() end)
-    Step("move it (anchor again, further right)", function() ghost:ClearAllPoints(); ghost:SetPoint("TOPLEFT", sack, "BOTTOMLEFT", 40, -2) end)
-    Step("hide, then show it", function() ghost:Hide(); ghost:Show() end)
-    Step("make a frame as a child of the sack", function()
-        state.child = state.child or CreateFrame("Frame", nil, sack)
-        state.child:SetSize(8, 8)
-        state.child:SetPoint("TOPRIGHT", sack, "BOTTOMRIGHT", 0, -2)
-        state.child.back = state.child.back or state.child:CreateTexture(nil, "BACKGROUND")
-        state.child.back:SetAllPoints()
-        state.child.back:SetColorTexture(0, 1, 1, 1)
-        state.child:Show()
-    end)
-    Say("An orange square should sit under the sack, and a small cyan one at its right. /reload removes them.")
-end
-
 function commands.bags() ToggleOwnBags() end
 
 function commands.probe()
@@ -349,6 +251,7 @@ function commands.fields(args)
     if not found then Say("bag slot info: that item is not in your bags right now") end
 end
 
+ns.commands = commands -- Debug.lua adds its own
 SLASH_SACKS1 = "/sacks"
 SlashCmdList["SACKS"] = function(message)
     local args = Words(message)

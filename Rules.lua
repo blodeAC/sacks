@@ -151,6 +151,18 @@ function Stat.Options(field)
     return options
 end
 
+-- The fields a rule line can test, in the order the pickers list them (Items tab and Layout tab share this).
+local function RuleFields()
+    return { { label = "Class", value = "class" }, { label = "Subclass", value = "sub" },
+        { label = "Quality", value = "quality" }, { label = "Name", value = "name" },
+        { label = "Tooltip text", value = "tooltip" },
+        { label = "Item level", value = "ilvl" }, { label = "Required level", value = "level" },
+        { label = "Equip slot", value = "equip" }, { label = "Bind type", value = "bind" },
+        { label = "Soulbound", value = "bound" }, { label = "Crafting reagent", value = "reagent" },
+        { label = "Sell price", value = "price" }, { label = "Stack size", value = "stack" },
+        { label = "Special bag type", value = "family" } }
+end
+
 local function ConditionMatches(condition, item)
     local field = condition.field
     if field == "class" then return Compare(condition.op, item.classID, condition.value) end
@@ -308,14 +320,22 @@ local function ValueText(condition, rule)
     return tostring(condition.value)
 end
 
+-- A line of a rule in three pieces, as the Items tab shows it: what is tested, how, and against what.
+local function ClauseParts(condition, rule)
+    return FIELD_TEXT[condition.field] or STATS[condition.field].text, OP_TEXT[condition.op], ValueText(condition, rule)
+end
+
 local function Describe(rule)
     local text = ""
     for index, condition in ipairs(rule) do
         if index > 1 then text = text .. (condition.join == "OR" and "  OR  " or " and ") end
-        text = text .. (FIELD_TEXT[condition.field] or STATS[condition.field].text) .. " " .. OP_TEXT[condition.op] .. " " .. ValueText(condition, rule)
+        local field, op, value = ClauseParts(condition, rule)
+        text = text .. field .. " " .. op .. " " .. value
     end
     return text ~= "" and text or "everything else"
 end
+
+local SACK_COLUMN_X = -300 -- the starting sacks sit in one column this far left of the screen centre
 
 -- Starting sacks, built from the game's own enums. The first sack that matches an item gets it.
 local function DefaultGroups()
@@ -323,11 +343,11 @@ local function DefaultGroups()
     local function add(name, rule, x, y)
         groups[#groups + 1] = { name = name, rule = rule, point = "CENTER", x = x, y = y }
     end
-    add("Combat loot", {}, -300, 300)
+    add("Combat loot", {}, SACK_COLUMN_X, 300)
     groups[1].builtin = true
-    add("Quest", { { field = "class", op = "=", value = Enum.ItemClass.Questitem } }, -300, 200)
-    add("Junk", { { field = "quality", op = "<=", value = Enum.ItemQuality.Poor } }, -300, 100)
-    add("Consumables", { { field = "class", op = "=", value = Enum.ItemClass.Consumable } }, -300, 0)
+    add("Quest", { { field = "class", op = "=", value = Enum.ItemClass.Questitem } }, SACK_COLUMN_X, 200)
+    add("Junk", { { field = "quality", op = "<=", value = Enum.ItemQuality.Poor } }, SACK_COLUMN_X, 100)
+    add("Consumables", { { field = "class", op = "=", value = Enum.ItemClass.Consumable } }, SACK_COLUMN_X, 0)
     return groups
 end
 
@@ -356,7 +376,7 @@ local function EnsureFallback()
             end
         end
     end
-    SacksDB.fallback = SacksDB.fallback or { name = OTHER_NAME, point = "CENTER", x = -300, y = -100 }
+    SacksDB.fallback = SacksDB.fallback or { name = OTHER_NAME, point = "CENTER", x = SACK_COLUMN_X, y = -100 }
     SacksDB.fallback.rule = {}
     SacksDB.fallback.fixed = true
 end
@@ -381,7 +401,7 @@ local function EnsureCombatSack()
             if group == found then table.remove(SacksDB.groups, index) break end
         end
     else
-        found = { point = "CENTER", x = -300, y = 300 }
+        found = { point = "CENTER", x = SACK_COLUMN_X, y = 300 }
     end
     found.name = COMBAT_NAME
     found.builtin = true
@@ -392,8 +412,10 @@ end
 
 -- shared with the files after this one
 ns.EnsureCombatSack = EnsureCombatSack
+ns.RuleFields = RuleFields
 ns.AllGroups = AllGroups
 ns.DefaultGroups = DefaultGroups
+ns.ClauseParts = ClauseParts
 ns.Describe = Describe
 ns.EnsureFallback = EnsureFallback
 ns.FindGroup = FindGroup

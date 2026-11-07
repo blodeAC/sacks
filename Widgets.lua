@@ -21,6 +21,17 @@ local function NativeFrame(kind, parent, template)
     return CreateFrame(kind, nil, parent), false
 end
 
+-- A typing box the game's own way. Escape and Enter give the keyboard back; onTyped(self, typed) is called as you type.
+local function MakeTextBox(parent, width, onTyped)
+    local box = NativeFrame("EditBox", parent, "InputBoxTemplate")
+    if width then box:SetSize(width, ns.BUTTON_HEIGHT) end
+    box:SetAutoFocus(false)
+    box:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    box:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+    if onTyped then box:SetScript("OnTextChanged", onTyped) end
+    return box
+end
+
 -- width may be a number, or nil to fit the button to its own text (a table of texts fits the widest)
 -- An option may carry a colour ({0..1, 0..1, 0..1}); it is written in that colour in the list and in the box.
 local function Coloured(option)
@@ -43,6 +54,109 @@ local function MakeText(parent, template, point, x, y)
     text:SetPoint(point, x, y)
     text:SetJustifyH("LEFT")
     return text
+end
+
+-- Small grey help text where the bits between `backticks` sit on a lighter patch, like code in a chat. Each text is one line
+-- (the lines are not wrapped); returns a frame that holds them, one under another.
+local CODE_PAD, WORD_GAP = 3, 4
+local function MakeNote(parent, lines, width)
+    local note = CreateFrame("Frame", nil, parent)
+    note.height = #lines * ns.LABEL_HEIGHT
+    note:SetSize(width, note.height)
+    for row, markup in ipairs(lines) do
+        local x, top = 0, -(row - 1) * ns.LABEL_HEIGHT
+        local index = 0
+        local heading = markup:sub(1, 1) == "#" -- a line that starts with # is a heading
+        if heading then
+            local label = note:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            label:SetJustifyH("LEFT")
+            label:SetPoint("TOPLEFT", 0, top)
+            label:SetText(markup:sub(2))
+            markup = ""
+        end
+        for piece in (markup .. "`"):gmatch("(.-)`") do
+            index = index + 1
+            local code = index % 2 == 0
+            local text = piece:match("^%s*(.-)%s*$")
+            if piece:match("^%s") then x = x + WORD_GAP end
+            if text ~= "" then
+                local label = note:CreateFontString(nil, "OVERLAY", code and "GameFontHighlightSmall" or "GameFontDisableSmall")
+                label:SetJustifyH("LEFT")
+                label:SetText((text:gsub("|", "||"))) -- a typed | would otherwise start a colour code
+                local wide = label:GetStringWidth()
+                if code then
+                    local patch = note:CreateTexture(nil, "BACKGROUND")
+                    patch:SetColorTexture(1, 1, 1, 0.16)
+                    patch:SetPoint("TOPLEFT", x, top + 1)
+                    patch:SetSize(wide + 2 * CODE_PAD, ns.LABEL_HEIGHT - 1)
+                    x = x + CODE_PAD
+                end
+                label:SetPoint("TOPLEFT", x, top)
+                x = x + wide + (code and CODE_PAD or 0)
+            end
+            if piece:match("%s$") and piece:match("%S") then x = x + WORD_GAP end
+        end
+    end
+    return note
+end
+
+-- A box in the middle of the screen that the player has to deal with before anything else works: the screen behind it is
+-- dimmed and every click outside the box is eaten. Escape closes it. Returns the blocker frame; the box is blocker.box.
+local function MakeModal(name)
+    local dialog = CreateFrame("Frame", name, UIParent)
+    dialog:SetAllPoints(UIParent)
+    dialog:SetFrameStrata("FULLSCREEN_DIALOG")
+    dialog:EnableMouse(true)
+    dialog.dim = dialog:CreateTexture(nil, "BACKGROUND")
+    dialog.dim:SetAllPoints()
+    dialog.dim:SetColorTexture(0, 0, 0, 0.55)
+    dialog.box = CreateFrame("Frame", nil, dialog)
+    dialog.box:SetPoint("CENTER")
+    dialog.box:EnableMouse(true)
+    dialog.box.back = dialog.box:CreateTexture(nil, "BACKGROUND")
+    dialog.box.back:SetAllPoints()
+    dialog.box.back:SetColorTexture(0.05, 0.05, 0.05, 0.95)
+    dialog:Hide()
+    if tinsert and UISpecialFrames then tinsert(UISpecialFrames, name) end
+    return dialog
+end
+
+-- A question the player has to answer: Cancel (or Escape), or the yes button. Built once, then reused for every question.
+-- Sized from its own text: as wide as the widest line or the two buttons, whichever is wider.
+local function Confirm(title, detail, yesLabel, onYes)
+    local dialog = ns.confirmDialog
+    if not dialog then
+        dialog = MakeModal("SacksConfirm")
+        dialog.title = dialog.box:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        dialog.detail = dialog.box:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        dialog.no = MakeButton(dialog.box, "Cancel", nil, function() dialog:Hide() end)
+        dialog.yes = MakeButton(dialog.box, "Yes", nil, function() end)
+        ns.confirmDialog = dialog
+    end
+    local pad = ns.PADDING
+    dialog.title:SetText(title)
+    dialog.detail:SetText(detail)
+    dialog.yes:SetText(yesLabel)
+    local yesWidth = ns.ButtonWidth(yesLabel)
+    dialog.yes:SetWidth(yesWidth)
+    dialog.yes:SetScript("OnClick", function()
+        dialog:Hide()
+        onYes()
+    end)
+    local buttons = ns.ButtonWidth("Cancel") + pad + yesWidth
+    local lines = math.max(math.ceil(ns.TextWidth(title, "GameFontNormal")), math.ceil(ns.TextWidth(detail, "GameFontHighlight")))
+    local width = math.max(lines, buttons) + 4 * pad
+    dialog.box:SetSize(width, 2 * pad + LABEL_HEIGHT + pad + LABEL_HEIGHT + 2 * pad + BUTTON_HEIGHT + 2 * pad)
+    dialog.title:ClearAllPoints()
+    dialog.title:SetPoint("TOPLEFT", 2 * pad, -2 * pad)
+    dialog.detail:ClearAllPoints()
+    dialog.detail:SetPoint("TOPLEFT", 2 * pad, -(2 * pad + LABEL_HEIGHT + pad))
+    local buttonTop = -(2 * pad + LABEL_HEIGHT + pad + LABEL_HEIGHT + 2 * pad)
+    dialog.no:ClearAllPoints()
+    dialog.no:SetPoint("TOPRIGHT", -2 * pad, buttonTop)
+    dialog.yes:ClearAllPoints()
+    dialog.yes:SetPoint("RIGHT", dialog.no, "LEFT", -pad, 0)
+    dialog:Show()
 end
 
 -- A tick box drawn with the game's own check textures, with its label to the right.
@@ -259,11 +373,15 @@ end
 -- shared with the files after this one
 ns.AddSack = AddSack
 ns.ClassOptions = ClassOptions
+ns.Confirm = Confirm
+ns.MakeModal = MakeModal
 ns.MakeButton = MakeButton
 ns.MakeCheck = MakeCheck
 ns.MakeChoice = MakeChoice
 ns.MakeText = MakeText
 ns.NativeFrame = NativeFrame
+ns.MakeTextBox = MakeTextBox
+ns.MakeNote = MakeNote
 ns.OperatorOptions = OperatorOptions
 ns.QualityOptions = QualityOptions
 ns.SubClassOptions = SubClassOptions

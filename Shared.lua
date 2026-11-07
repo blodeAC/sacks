@@ -63,6 +63,20 @@ local NAME_WIDTH = math.ceil(TextWidth(string.rep("M", 16))) + 2 * PADDING -- a 
 local DROPDOWN_RIGHT = DROPDOWN_INSET + PADDING -- how far a drop-down's art reaches past the width it is given
 local WHEEL_STEP = 3 -- rows per mouse wheel notch
 local WINDOW_WIDTH = 760 -- how wide the settings window is drawn
+
+-- Colours used in more than one place ({ red, green, blue }), and how see-through the dark boxes are.
+local COLOR = {
+    GOLD = { 1, 0.82, 0 }, -- titles, the game's own text colour
+    GREY = { 0.7, 0.7, 0.7 }, -- secondary text
+    DIM = { 0.6, 0.6, 0.6 }, -- something with nothing in it
+    GREEN = { 0.4, 1, 0.4 },
+    AMBER = { 1, 0.7, 0.1 },
+    RED = { 1, 0.2, 0.2 },
+}
+local function Rgb(color) return color[1], color[2], color[3] end
+local BACKDROP_ALPHA = 0.45 -- behind a sack
+local SLOT_TINT_ALPHA = 0.45 -- behind an item, coloured by its quality
+local EMPTY_TINT_ALPHA = 0.3 -- behind an item with no quality colour
 local DEFAULT_COLUMNS = 6
 local SCAN_LIMIT = 30 -- how many item class / subclass ids to scan when looking names up
 local OTHER_NAME = "Other"
@@ -179,4 +193,26 @@ ns.TABLE_ROW_HEIGHT = TABLE_ROW_HEIGHT
 ns.TITLE_HEIGHT = TITLE_HEIGHT
 ns.WHEEL_STEP = WHEEL_STEP
 ns.WINDOW_WIDTH = WINDOW_WIDTH
+ns.COLOR, ns.Rgb = COLOR, Rgb
+ns.BACKDROP_ALPHA, ns.SLOT_TINT_ALPHA, ns.EMPTY_TINT_ALPHA = BACKDROP_ALPHA, SLOT_TINT_ALPHA, EMPTY_TINT_ALPHA
 ns.state = state
+
+---------------------------------------------------------------------------------------------------
+-- Events: one frame listens for everything; each file says what it wants with ns.OnEvent.
+---------------------------------------------------------------------------------------------------
+
+local listeners = {} -- event name -> list of functions
+local eventFrame = CreateFrame("Frame")
+eventFrame:RegisterEvent("PLAYER_LOGIN")
+eventFrame:SetScript("OnEvent", function(_, event, ...)
+    for _, listener in ipairs(listeners[event] or {}) do listener(event, ...) end
+end)
+
+-- Call listener(event, ...) whenever the game sends the event. An event this game version doesn't have is ignored.
+function ns.OnEvent(event, listener)
+    if not listeners[event] then
+        if not pcall(eventFrame.RegisterEvent, eventFrame, event) then return end
+        listeners[event] = {}
+    end
+    table.insert(listeners[event], listener)
+end
