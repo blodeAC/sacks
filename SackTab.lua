@@ -458,6 +458,7 @@ local function MakeSortRows(page, L, geom)
             table.remove(SortList(), level)
             Refresh()
         end)
+        ns.MarkWhatGoes(row.remove, row.band) -- the whole step, tinted while the mouse is on its x
         -- The conditions of a rule step: the same lines as a sack's rule, in one compact block.
         row.host = CreateFrame("Frame", nil, page)
         row.host:SetSize(FULL - NUM, LINE_HEIGHT)
@@ -563,7 +564,7 @@ end
 local function PlaceBelow(page, height)
     local top = page.sortTop + math.max(height, LINE_HEIGHT)
     page.sortAddMatch:ClearAllPoints()
-    page.sortAddMatch:SetPoint("TOPLEFT", GRIP_WIDTH, -top) -- in line with the steps, past their dots
+    page.sortAddMatch:SetPoint("TOPLEFT", 0, -top) -- at the left edge, under the dots
     page.sortAdd:ClearAllPoints()
     page.sortAdd:SetPoint("LEFT", page.sortAddMatch, "RIGHT", PADDING, 0)
     top = top + BUTTON_HEIGHT + PADDING
@@ -1371,7 +1372,7 @@ local function PlaceLines(page, group, top)
     host:SetHeight(math.max(1, #host.draft * LINE_HEIGHT))
     y = y + #host.draft * LINE_HEIGHT
     takes.add:ClearAllPoints()
-    takes.add:SetPoint("TOPLEFT", GRIP_WIDTH, -y) -- in line with the lines, past their dots
+    takes.add:SetPoint("TOPLEFT", 0, -y) -- at the left edge, under the dots
     if Describe(group.rule) ~= Describe(page.savedRule) then takes.undo:Enable() else takes.undo:Disable() end
     return y + BUTTON_HEIGHT + PADDING
 end

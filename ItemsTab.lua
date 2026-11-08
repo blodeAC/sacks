@@ -549,6 +549,12 @@ local function MakeLineButtons(line, page, changed, plainY)
         changed()
     end)
     line.remove:SetPoint("TOPRIGHT", 0, plainY)
+    -- the row it belongs to, tinted while the mouse is on it: the x is at the far end of a wide row
+    line.removeArea = CreateFrame("Frame", nil, line)
+    line.removeArea:SetPoint("TOPLEFT", 0, plainY)
+    line.removeArea:SetPoint("TOPRIGHT", 0, plainY)
+    line.removeArea:SetHeight(BUTTON_HEIGHT)
+    ns.MarkWhatGoes(line.remove, line.removeArea)
     -- Dragging a line to a new place keeps each and/or where it is, so the first line never carries one.
     line.grip = ns.MakeGrip(line, BUTTON_HEIGHT)
     line.grip:SetPoint("TOPLEFT", 0, plainY) -- level with the buttons

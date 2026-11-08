@@ -402,6 +402,18 @@ local function ZoneTitleMiddle()
 end
 
 -- Six dots, `height` tall and ns.GRIP_WIDTH wide, that a row is dragged by. Returns the button that holds them.
+-- While the mouse is on `button` (an x), `area` is tinted red, so you can see what it would remove. Returns the tint.
+local function MarkWhatGoes(button, area)
+    local tint = area:CreateTexture(nil, "BACKGROUND")
+    tint:SetAllPoints(area)
+    tint:SetColorTexture(1, 0.2, 0.2, 0.15)
+    tint:Hide()
+    button:HookScript("OnEnter", function() tint:Show() end)
+    button:HookScript("OnLeave", function() tint:Hide() end)
+    button:HookScript("OnHide", function() tint:Hide() end)
+    return tint
+end
+
 local function MakeGrip(parent, height)
     local grip = CreateFrame("Button", nil, parent)
     grip:SetSize(ns.GRIP_WIDTH, height)
@@ -515,6 +527,7 @@ ns.MakeCheck = MakeCheck
 ns.MakeChoice = MakeChoice
 ns.MakeText = MakeText
 ns.MakeGrip = MakeGrip
+ns.MarkWhatGoes = MarkWhatGoes
 ns.MakeZoneTop = MakeZoneTop
 ns.Reorderable = Reorderable
 ns.ZoneTitleMiddle = ZoneTitleMiddle
