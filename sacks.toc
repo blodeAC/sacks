@@ -1,7 +1,7 @@
 ## Interface: 16001
 ## Title: sacks
 ## Notes: Bag items as small pinned groups
-## Version: 0.0.8
+## Version: 0.0.33
 ## SavedVariables: SacksDB
 Shared.lua
 Bags.lua
@@ -19,7 +19,8 @@ Debug.lua
 Widgets.lua
 Transfer.lua
 ItemsTab.lua
-LayoutTab.lua
-SacksTab.lua
+SackTab.lua
+SettingsTab.lua
+Nav.lua
 Window.lua
 Core.lua

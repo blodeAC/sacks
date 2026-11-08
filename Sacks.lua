@@ -39,15 +39,19 @@ local function ShowFreeTooltip(owner)
     GameTooltip:Show()
 end
 
--- How a sack that uses its items on left click is marked (its title and a thin border), chosen on the Sacks tab.
+-- How a sack that uses its items on left click is marked (its title and a thin border), chosen on the Settings page.
 local CLICK_COLORS = {
     { label = "Green", value = "green", r = 0.3, g = 1, b = 0.3 },
     { label = "Blue", value = "blue", r = 0.4, g = 0.7, b = 1 },
     { label = "Purple", value = "purple", r = 0.8, g = 0.5, b = 1 },
     { label = "Red", value = "red", r = 1, g = 0.35, b = 0.35 },
     { label = "White", value = "white", r = 1, g = 1, b = 1 },
-    { label = "No marking", value = "none" },
+    { label = "No marking", value = "none", color = { 0.6, 0.6, 0.6 } },
 }
+-- each choice is written in its own colour in the menu and in the box
+for _, choice in ipairs(CLICK_COLORS) do
+    if choice.r then choice.color = { choice.r, choice.g, choice.b } end
+end
 local function ClickColor()
     local wanted = SacksDB.clickColor or "green"
     for _, color in ipairs(CLICK_COLORS) do
@@ -56,12 +60,13 @@ local function ClickColor()
     return 0.3, 1, 0.3
 end
 ns.CLICK_COLORS = CLICK_COLORS
+ns.ClickColor = ClickColor
 
 local function MakeGroupFrame(group)
     local frame = CreateFrame("Frame", nil, UIParent)
-    -- Above the settings window (which is DIALOG), so a sack that starts in the middle of the screen is not hidden behind it.
-    -- Set before the slots are made so they follow.
-    frame:SetFrameStrata("DIALOG")
+    -- Where the game's own bags are drawn, under the settings window (DIALOG): a big sack must not cover the window you
+    -- set it up in. Set before the slots are made so they follow.
+    frame:SetFrameStrata("MEDIUM")
     frame:SetFrameLevel(100)
     frame:SetMovable(true)
     frame:SetClampedToScreen(true)
@@ -96,20 +101,24 @@ local function MakeGroupFrame(group)
         BeginSackDrag(frame)
     end)
     frame.handle:SetScript("OnDragStop", function() FinishDrag(group, frame) end)
-    -- A title too long for the sack ends in "..."; hovering it shows the whole thing.
+    -- Right-click the title (or a sack with no title) opens the settings window on this sack.
+    frame.handle:SetScript("OnMouseUp", function(_, mouse)
+        if mouse == "RightButton" and ns.EditSack then ns.EditSack(group) end
+    end)
+    -- Hovering the title shows it whole (a long one ends in "..."), what the sack is docked to, and what changed in combat.
     frame.handle:SetScript("OnEnter", function(self)
-        local full = state.titles[group]
         local stale = state.stale[group]
-        local cut = full and frame.title.IsTruncated and frame.title:IsTruncated()
-        if cut or stale then
-            GameTooltip:SetOwner(self, "ANCHOR_TOP")
-            GameTooltip:SetText(cut and full or (state.titles[group] or ""))
-            if stale then
-                GameTooltip:AddLine("Changed during combat; this sack is rebuilt when combat ends:", 1, 0.5, 0, true)
-                for _, line in ipairs(stale) do GameTooltip:AddLine(line, 1, 1, 1) end
-            end
-            GameTooltip:Show()
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText(state.titles[group] or group.name)
+        if ns.DockWords then
+            for _, line in ipairs(ns.DockWords(group)) do GameTooltip:AddLine(line, 0.8, 0.8, 0.8, true) end
         end
+        if stale then
+            GameTooltip:AddLine("Changed during combat. This sack is rebuilt when combat ends:", 1, 0.5, 0, true)
+            for _, line in ipairs(stale) do GameTooltip:AddLine(line, 1, 1, 1) end
+        end
+        GameTooltip:AddLine("Right-click: this sack's settings", 0.5, 0.8, 1)
+        GameTooltip:Show()
     end)
     frame.handle:SetScript("OnLeave", function() GameTooltip:Hide() end)
     frame.blank = CreateFrame("Frame", nil, frame)
@@ -150,9 +159,11 @@ local function SackGeometry(group, itemCount)
     local bottomSpace = layout.title == "BOTTOM" and TITLE_HEIGHT or PADDING
     local width, height = GridSize(columns, rows, size, topSpace, bottomSpace)
 
-    -- The first cell is next to the corner the sack grows from.
-    local fromRight = layout.anchor == "TOPRIGHT" or layout.anchor == "BOTTOMRIGHT"
-    local fromBottom = layout.anchor == "BOTTOMLEFT" or layout.anchor == "BOTTOMRIGHT"
+    -- The first cell is next to the corner the sack grows from; filled like a page, it is at the top left wherever the
+    -- sack is pinned (the sack still grows away from its corner).
+    local page = layout.flow == "PAGE"
+    local fromRight = not page and (layout.anchor == "TOPRIGHT" or layout.anchor == "BOTTOMRIGHT")
+    local fromBottom = not page and (layout.anchor == "BOTTOMLEFT" or layout.anchor == "BOTTOMRIGHT")
     return { width = width, height = height, size = size, layout = layout, topSpace = topSpace, bottomSpace = bottomSpace,
         fromRight = fromRight, fromBottom = fromBottom, count = itemCount, shift = shift, blankMode = blankMode, reading = reading }
 end
@@ -303,6 +314,70 @@ local function FillGroup(group, items, free, special)
     FillBlankSlot(frame, geom, #items, free, special)
 end
 
+-- A box of its own that shows your gold with the game's coin icons, to put anywhere (or dock against a sack): the
+-- game only shows gold at the bottom of its backpack. It follows the game's money event, not a timer.
+local MONEY_START = { point = "CENTER", x = 0, y = -280 }
+local function MoneyGroup()
+    SacksDB.money = SacksDB.money or { name = "Gold", shown = false, point = MONEY_START.point, x = MONEY_START.x, y = MONEY_START.y }
+    return SacksDB.money
+end
+
+local function MoneyText() return ns.CoinText((GetMoney and GetMoney()) or 0) end
+
+local function MakeMoneyBox(group)
+    local frame = CreateFrame("Frame", "SacksMoneyBox", UIParent)
+    frame:SetFrameStrata("MEDIUM")
+    frame:SetFrameLevel(100)
+    frame:SetMovable(true)
+    frame:SetClampedToScreen(true)
+    frame:EnableMouse(true)
+    frame:RegisterForDrag("LeftButton")
+    frame.back = frame:CreateTexture(nil, "BACKGROUND")
+    frame.back:SetAllPoints()
+    frame.back:SetColorTexture(0, 0, 0, BACKDROP_ALPHA)
+    frame.text = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    frame.text:SetPoint("CENTER")
+    frame:SetScript("OnDragStart", function()
+        if not DockFrame() then BeginSackDrag(frame) end
+    end)
+    frame:SetScript("OnDragStop", function() FinishDrag(group, frame) end)
+    frame:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetText("Gold")
+        if ns.DockWords then
+            for _, line in ipairs(ns.DockWords(group)) do GameTooltip:AddLine(line, 0.8, 0.8, 0.8, true) end
+        end
+        GameTooltip:AddLine("Drag to move it. Settings page: hide it or reset its position.", 0.5, 0.8, 1, true)
+        GameTooltip:Show()
+    end)
+    frame:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    return frame
+end
+
+-- The coins and the box's size, which follows them. Placing it again only when asked (place): the sacks do that.
+local function UpdateMoney(place)
+    if not SacksDB then return end
+    local group = MoneyGroup()
+    local frame = state.frames[group]
+    if not group.shown then
+        if frame then frame:Hide() end
+        return
+    end
+    if not frame then
+        frame = MakeMoneyBox(group)
+        state.frames[group] = frame
+        place = true
+    end
+    frame.text:SetText(MoneyText())
+    local width = frame.text:GetStringWidth()
+    frame:SetSize(math.ceil(type(width) == "number" and width or 0) + PADDING * 2, ns.BUTTON_HEIGHT)
+    if place and not DockFrame() then
+        frame:ClearAllPoints()
+        PlaceOne(group, frame)
+    end
+    frame:Show()
+end
+
 -- An optional box of its own that shows the free slots, to put anywhere (or dock against a sack).
 -- Where the free-slots box starts (and where its reset puts it): a little below the middle, clear of a new sack.
 local WIDGET_START = { point = "CENTER", x = 0, y = -220 }
@@ -313,8 +388,8 @@ end
 
 local function MakeWidget(group)
     local frame = CreateFrame("Frame", "SacksFreeWidget", UIParent)
-    -- Above the settings window, so the box is not hidden behind it while you place it.
-    frame:SetFrameStrata("DIALOG")
+    -- With the sacks, under the settings window.
+    frame:SetFrameStrata("MEDIUM")
     frame:SetFrameLevel(100)
     frame:SetMovable(true)
     frame:SetClampedToScreen(true)
@@ -405,6 +480,7 @@ ns.Guarded = Guarded
 
 local function Refresh()
     if not SacksDB then return end
+    state.generation = (state.generation or 0) + 1 -- what was worked out from the bags before this is out of date
     if InCombatLockdown() then
         state.pending = true -- secure buttons can't be changed in combat; redo it when combat ends
         Guarded("combat counts", RefreshCounts) -- but what each slot shows can be brought up to date now
@@ -443,16 +519,13 @@ local function Refresh()
     state.placed = 0
     for _, group in ipairs(groups) do
         SortItems(group, sorted[group])
-        if group.reverse then
-            local list, count = sorted[group], #sorted[group]
-            for index = 1, math.floor(count / 2) do list[index], list[count - index + 1] = list[count - index + 1], list[index] end
-        end
         state.counts[group] = #sorted[group]
         state.placed = state.placed + #sorted[group]
         FillGroup(group, sorted[group], free, special)
     end
     PlaceGroups()
     UpdateWidget(free, special)
+    UpdateMoney(true)
     RefreshFresh()
     if ns.RefreshSettings then Guarded("settings", ns.RefreshSettings) end
 end
@@ -469,8 +542,11 @@ local function CreateSack(name, rule)
     name = (name or ""):match("^%s*(.-)%s*$")
     if name == "" then return nil, "type a name for the sack first" end
     if FindGroup(name) then return nil, "there is already a sack called " .. name end
-    local group = { name = name, rule = rule or {}, point = "CENTER", x = 0, y = 0 }
-    table.insert(SacksDB.groups, 1, group)
+    -- a new sack grows from the default corner, if one is set on the Defaults page
+    local group = { name = name, rule = rule or {}, point = "CENTER", x = 0, y = 0, anchor = ns.Default("anchor", nil) }
+    -- First in priority, but after Combat loot, which always stays first.
+    local first = SacksDB.groups[1]
+    table.insert(SacksDB.groups, (first and first.builtin) and 2 or 1, group)
     return group
 end
 
@@ -478,7 +554,7 @@ end
 -- Puts a sack (or the free-slots box) back where a new one starts: undocked, in the middle of the screen. The box starts
 -- a little lower so it does not sit on top of a new sack.
 local function ResetPosition(group)
-    local start = (group == SacksDB.widget) and WIDGET_START or { point = "CENTER", x = 0, y = 0 }
+    local start = (group == SacksDB.widget) and WIDGET_START or (group == SacksDB.money) and MONEY_START or { point = "CENTER", x = 0, y = 0 }
     group.point, group.relPoint, group.relativeTo, group.dock = start.point, nil, nil, nil
     group.x, group.y = start.x, start.y
     Refresh()
@@ -488,3 +564,5 @@ ns.CreateSack = CreateSack
 ns.HideRemoved = HideRemoved
 ns.Refresh = Refresh
 ns.WidgetGroup = WidgetGroup
+ns.MoneyGroup = MoneyGroup
+ns.UpdateMoney = UpdateMoney

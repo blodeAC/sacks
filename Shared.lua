@@ -39,6 +39,19 @@ local function TextWidth(text, font)
     return type(width) == "number" and width or 0
 end
 
+-- The title of a part of a page (Takes, Looks, Order; the sections of Settings): the game's gold font, halfway between
+-- its normal size and its large one.
+local function MakeZoneFont()
+    local font = CreateFont("SacksZoneFont")
+    font:SetFontObject(GameFontNormal)
+    local path, size, flags = GameFontNormal:GetFont()
+    local _, large = GameFontNormalLarge:GetFont()
+    size = Positive(size, 12)
+    font:SetFont(path, math.floor((size + Positive(large, size + 4)) / 2 + 0.5), flags)
+    font:SetTextColor(GameFontNormal:GetTextColor())
+end
+MakeZoneFont()
+
 local LABEL_HEIGHT = math.ceil(FontHeight("GameFontHighlightSmall", 10)) + 2
 local TITLE_HEIGHT = math.ceil(FontHeight("GameFontNormalSmall", 10)) + 2
 local PADDING = math.ceil(LABEL_HEIGHT / 2)
@@ -47,24 +60,39 @@ local BUTTON_HEIGHT = math.ceil(MeasuredHeight("Button", nil, "UIPanelButtonTemp
 local MARGIN = 2 * PADDING
 local CHECK_SIZE = BUTTON_HEIGHT + SLOT_GAP
 local DROPDOWN_HEIGHT = math.ceil(MeasuredHeight("Frame", "SacksDropdownProbe", "UIDropDownMenuTemplate", BUTTON_HEIGHT + 2 * PADDING))
-local LINE_HEIGHT = DROPDOWN_HEIGHT + SLOT_GAP
+local LINE_HEIGHT = BUTTON_HEIGHT + PADDING -- a row of boxes and buttons (a rule line, a sort step): the same pitch as the rows of Looks
+-- Where the game's drop-down template draws its box inside its frame, measured in game (0.0.30: frame edges against the
+-- Default button beside it on the same screenshot): the box starts this far in from the frame's left edge, ends this far
+-- in from its right edge, and is drawn at the top of the frame, as tall as a button (the frame is taller than what you see).
+local DROPDOWN_ART_LEFT = 19
+local DROPDOWN_ART_RIGHT = 19
+local DROPDOWN_SIDES = 25 -- UIDropDownMenu_SetWidth makes the frame this much wider than the width it is given, each side
+local TEXTBOX_ART_LEFT = 5 -- measured in game (0.0.29): a typing box's art starts this far left of its frame
+local LINE_LIFT = 0 -- a button or label beside a drop-down lines up with the frame's top: that is where its box is
 local ROW_HEIGHT = BUTTON_HEIGHT + PADDING
 local ORDER_ROW_HEIGHT = BUTTON_HEIGHT + SLOT_GAP
 local HEADER = ROW_HEIGHT
+local ZONE_TITLE_HEIGHT = math.ceil(FontHeight("SacksZoneFont", 14))
+local CREASE = 2 -- the gold line above a part's title
+-- a part's top: room above the crease, the crease, and its title
+local ZONE_HEIGHT = PADDING + CREASE + PADDING + ZONE_TITLE_HEIGHT + PADDING
 local HINT_HEIGHT = 2 * LABEL_HEIGHT - 2
 local SECTION_HEIGHT = LABEL_HEIGHT + BUTTON_HEIGHT + 5 * PADDING
-local CONTENT_TOP = HEADER + BUTTON_HEIGHT + 2 * PADDING
+local CONTENT_TOP = HEADER + PADDING -- below the window's title bar: the sack list and the page beside it start here
 local TABLE_ROW_HEIGHT = BUTTON_HEIGHT - SLOT_GAP + 1
 local DROPDOWN_INSET = 2 * PADDING + SLOT_GAP -- the template's left cap
 local CHOICE_WIDTH = math.ceil(TextWidth("Weapon (old)")) + 2 * DROPDOWN_INSET
 local LAYOUT_WIDTH = math.ceil(TextWidth("Bottom right")) + 2 * DROPDOWN_INSET + 2 * PADDING
 local SORT_LABEL_WIDTH = math.ceil(TextWidth("Then by")) + 2 * PADDING
 local NAME_WIDTH = math.ceil(TextWidth(string.rep("M", 16))) + 2 * PADDING -- a typing box for a name: room for 16 wide letters
-local DROPDOWN_RIGHT = DROPDOWN_INSET + PADDING -- how far a drop-down's art reaches past the width it is given
+local DROPDOWN_RIGHT = 2 * DROPDOWN_SIDES - DROPDOWN_ART_LEFT - DROPDOWN_ART_RIGHT -- the box you see: the width it is given plus this
 local WHEEL_STEP = 3 -- rows per mouse wheel notch
-local WINDOW_WIDTH = 760 -- how wide the settings window is drawn
+local WINDOW_WIDTH = 760 -- how wide a page of the settings window is drawn; the sack list at its left adds to the window
 
 -- Colours used in more than one place ({ red, green, blue }), and how see-through the dark boxes are.
+-- The marks on rows of the item table on a sack's page: in this sack, and fits its lines but taken by a sack above it.
+local MARK_IN = { 0.2, 0.8, 0.2, 0.35 }
+local MARK_TAKEN = { 1, 0.6, 0, 0.3 }
 local COLOR = {
     GOLD = { 1, 0.82, 0 }, -- titles, the game's own text colour
     GREY = { 0.7, 0.7, 0.7 }, -- secondary text
@@ -81,7 +109,7 @@ local DEFAULT_COLUMNS = 6
 local SCAN_LIMIT = 30 -- how many item class / subclass ids to scan when looking names up
 local OTHER_NAME = "Other"
 local DEFAULT_ANCHOR = "TOPLEFT"
-local DEFAULT_FLOW = "ROWS"
+local DEFAULT_FLOW = "PAGE"
 local DEFAULT_TITLE = "TOP"
 local DEFAULT_SORT = { { key = "name" } }
 local ICON_SIZE -- set below, once SlotSize exists
@@ -99,6 +127,7 @@ local function ButtonWidth(text)
 end
 PIN_WIDTH = ButtonWidth({ "Pin", "Unpin" })
 MOVE_WIDTH = ButtonWidth({ "Up", "Down" })
+local GRIP_WIDTH = 2 * PADDING -- the dots you drag a row by
 
 local function Say(text)
     print("|cff66ccffsacks|r " .. tostring(text))
@@ -157,6 +186,46 @@ ns.Container = Container
 ns.DEFAULT_ANCHOR = DEFAULT_ANCHOR
 ns.DEFAULT_COLUMNS = DEFAULT_COLUMNS
 ns.DEFAULT_FLOW = DEFAULT_FLOW
+
+-- The defaults every sack falls back on for what it has no setting of its own for. They are kept like a sack with no
+-- items, so the sack page can show and change them (Defaults, in the list at the left of the settings window).
+function ns.DefaultsGroup()
+    SacksDB.defaults = SacksDB.defaults or {}
+    local defaults = SacksDB.defaults
+    defaults.name, defaults.rule, defaults.isDefaults = "Defaults", defaults.rule or {}, true
+    defaults.reverse = nil -- Reverse is gone (see UpgradeSort)
+    return defaults
+end
+
+-- Money with the game's coin icons (gold, silver, copper), the way the backpack shows it. Built from the icon textures
+-- themselves: this client has no GetCoinTextureString. Units above the first one that is not zero are left out; zero
+-- money is "0" copper.
+local COINS = {
+    { size = 10000, icon = "Interface\\MoneyFrame\\UI-GoldIcon" },
+    { size = 100, icon = "Interface\\MoneyFrame\\UI-SilverIcon" },
+    { size = 1, icon = "Interface\\MoneyFrame\\UI-CopperIcon" },
+}
+function ns.CoinText(copper)
+    copper = math.max(0, math.floor(copper or 0))
+    local parts, started = {}, false
+    for _, coin in ipairs(COINS) do
+        local amount = math.floor(copper / coin.size)
+        copper = copper - amount * coin.size
+        if amount > 0 or started or coin.size == 1 then
+            started = true
+            parts[#parts + 1] = amount .. "|T" .. coin.icon .. ":0:0:2:0|t"
+        end
+    end
+    return table.concat(parts, " ")
+end
+
+-- A default setting: the one on the Defaults page, else the add-on's own (builtIn).
+function ns.Default(key, builtIn)
+    local defaults = SacksDB and SacksDB.defaults
+    local value = defaults and defaults[key]
+    if value == nil then return builtIn end
+    return value
+end
 ns.DEFAULT_SORT = DEFAULT_SORT
 ns.DEFAULT_TITLE = DEFAULT_TITLE
 ns.DROPDOWN_HEIGHT = DROPDOWN_HEIGHT
@@ -172,9 +241,16 @@ ns.ItemSubClassInfo = ItemSubClassInfo
 ns.LABEL_HEIGHT = LABEL_HEIGHT
 ns.LAYOUT_WIDTH = LAYOUT_WIDTH
 ns.LINE_HEIGHT = LINE_HEIGHT
+ns.LINE_LIFT = LINE_LIFT
 ns.MARGIN = MARGIN
 ns.MOVE_WIDTH = MOVE_WIDTH
+ns.GRIP_WIDTH = GRIP_WIDTH
+ns.CREASE = CREASE
+ns.ZONE_HEIGHT = ZONE_HEIGHT
+ns.ZONE_TITLE_HEIGHT = ZONE_TITLE_HEIGHT
 ns.ORDER_ROW_HEIGHT = ORDER_ROW_HEIGHT
+ns.MARK_IN = MARK_IN
+ns.MARK_TAKEN = MARK_TAKEN
 ns.OTHER_NAME = OTHER_NAME
 ns.PADDING = PADDING
 ns.PIN_WIDTH = PIN_WIDTH
@@ -183,6 +259,8 @@ ns.SCAN_LIMIT = SCAN_LIMIT
 ns.SECTION_HEIGHT = SECTION_HEIGHT
 ns.SLOT_GAP = SLOT_GAP
 ns.DROPDOWN_RIGHT = DROPDOWN_RIGHT
+ns.DROPDOWN_ART_LEFT = DROPDOWN_ART_LEFT
+ns.TEXTBOX_ART_LEFT = TEXTBOX_ART_LEFT
 ns.NAME_WIDTH = NAME_WIDTH
 ns.ButtonWidth = ButtonWidth
 ns.TextWidth = TextWidth

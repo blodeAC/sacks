@@ -65,8 +65,10 @@ end
 
 -- How a sack is laid out: its own settings, also while a vendor window is open.
 local function LayoutOf(group)
-    return { anchor = group.anchor or DEFAULT_ANCHOR, flow = group.flow or DEFAULT_FLOW,
-        title = group.title or DEFAULT_TITLE, wrap = group.cols or SacksDB.columns or DEFAULT_COLUMNS }
+    local Default = ns.Default
+    return { anchor = group.anchor or DEFAULT_ANCHOR, flow = group.flow or Default("flow", DEFAULT_FLOW),
+        title = group.title or Default("title", DEFAULT_TITLE),
+        wrap = group.cols or Default("cols", SacksDB.columns or DEFAULT_COLUMNS) }
 end
 
 local BeginSackDrag, EndSackDrag
@@ -74,6 +76,31 @@ local BeginSackDrag, EndSackDrag
 -- can be tucked against each other and moved aside without gaps or overlap.
 local SNAP_DISTANCE = 14
 local SNAP_GAP = 2
+
+-- A sack, or the free-slots box, by name.
+local function FindDockable(name)
+    local widget, money = SacksDB.widget, SacksDB.money
+    return FindGroup(name) or (widget and widget.name == name and widget or nil) or (money and money.name == name and money or nil)
+end
+
+-- The frames that move with this sack: those docked to it, docked to one of those, and so on. While it is dragged they
+-- come along, so they are always right against it; it must not snap or dock to them, or the two would be docked to
+-- each other and neither dock could hold.
+local function FollowerFrames(group)
+    local followers = {}
+    for other, otherFrame in pairs(state.frames) do
+        local walk, steps = other, 0
+        while walk and walk.dock and steps < 20 do
+            walk = FindDockable(walk.dock.to)
+            if walk == group then
+                followers[otherFrame] = true
+                break
+            end
+            steps = steps + 1
+        end
+    end
+    return followers
+end
 
 local function SnapAxis(low, size, targets)
     local best, bestDistance = 0, SNAP_DISTANCE + 1
@@ -87,11 +114,11 @@ local function SnapAxis(low, size, targets)
     return 0
 end
 
-local function SnapPosition(frame, left, bottom)
+local function SnapPosition(frame, left, bottom, followers)
     local width, height = frame:GetWidth(), frame:GetHeight()
     local xs, ys = { { low = 0, high = UIParent:GetWidth() } }, { { low = 0, high = UIParent:GetHeight() } }
     for _, other in pairs(state.frames) do
-        if other ~= frame and other:IsShown() then
+        if other ~= frame and other:IsShown() and not (followers and followers[other]) then
             local ol, ob, ow, oh = other:GetLeft(), other:GetBottom(), other:GetWidth(), other:GetHeight()
             if type(ol) == "number" and type(ob) == "number" and type(ow) == "number" and type(oh) == "number" then
                 -- Only snap along an axis to sacks that are actually next to us on the other axis.
@@ -107,6 +134,8 @@ end
 
 -- A sack dropped right against another one is docked to it: it stays against that sack when either changes size.
 -- The saved dock says which sack, which side, and how far along that side, measured from the corner the sack grows from.
+-- A sack dropped against several (tucked into a corner) docks to the first; the others are remembered as touches: if one
+-- of those grows into it later, this sack moves out of its way (see PushApart).
 
 local function DockOf(group, frame)
     local left, bottom, width, height = frame:GetLeft(), frame:GetBottom(), frame:GetWidth(), frame:GetHeight()
@@ -115,8 +144,10 @@ local function DockOf(group, frame)
     local fromRight = anchor == "TOPRIGHT" or anchor == "BOTTOMRIGHT"
     local fromBottom = anchor == "BOTTOMLEFT" or anchor == "BOTTOMRIGHT"
     local function near(a, b) return math.abs(a - b) <= 1.5 end
+    local followers = FollowerFrames(group)
+    local found, touches = nil, {}
     for other, otherFrame in pairs(state.frames) do
-        if other ~= group and otherFrame:IsShown() then
+        if other ~= group and otherFrame:IsShown() and not followers[otherFrame] then
             local ol, ob, ow, oh = otherFrame:GetLeft(), otherFrame:GetBottom(), otherFrame:GetWidth(), otherFrame:GetHeight()
             if type(ol) == "number" and type(ob) == "number" and type(ow) == "number" and type(oh) == "number" then
                 local overlapY = bottom < ob + oh and bottom + height > ob
@@ -140,10 +171,14 @@ local function DockOf(group, frame)
                 elseif overlapY and near(left + width, ol - SNAP_GAP) then dock = alongVertical(); dock.side = "LEFT"
                 elseif overlapX and near(bottom, ob + oh + SNAP_GAP) then dock = alongHorizontal(); dock.side = "TOP"
                 elseif overlapX and near(bottom + height, ob - SNAP_GAP) then dock = alongHorizontal(); dock.side = "BOTTOM" end
-                if dock then dock.to = other.name; return dock end
+                if dock then
+                    dock.to = other.name
+                    if found then touches[#touches + 1] = { to = other.name, side = dock.side } else found = dock end
+                end
             end
         end
     end
+    return found, (#touches > 0 and touches or nil)
 end
 
 function BeginSackDrag(frame)
@@ -162,11 +197,15 @@ function BeginSackDrag(frame)
         return
     end
     local grabX, grabY = cx / scale - left, cy / scale - bottom
+    local followers = {}
+    for group, each in pairs(state.frames) do
+        if each == frame then followers = FollowerFrames(group) end
+    end
     frame.dragging = true
     frame:SetScript("OnUpdate", function(self)
         local x, y = GetCursorPosition()
         local newLeft, newBottom = x / scale - grabX, y / scale - grabY
-        if not (IsAltKeyDown and IsAltKeyDown()) then newLeft, newBottom = SnapPosition(self, newLeft, newBottom) end
+        if not (IsAltKeyDown and IsAltKeyDown()) then newLeft, newBottom = SnapPosition(self, newLeft, newBottom, followers) end
         self:ClearAllPoints()
         self:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", newLeft, newBottom)
     end)
@@ -188,7 +227,7 @@ local function FinishDrag(group, frame)
     if DockFrame() then return end
     SavePosition(group, frame)
     local before = group.dock
-    group.dock = DockOf(group, frame)
+    group.dock, group.touches = DockOf(group, frame)
     local changed = (before and before.to) ~= (group.dock and group.dock.to)
         or (before and before.side) ~= (group.dock and group.dock.side)
     -- Boxes docked to this one are re-anchored to it, so they come along.
@@ -196,11 +235,6 @@ local function FinishDrag(group, frame)
 end
 
 -- The sack this one is docked to, if that sack still exists and the docks don't loop back around to this one.
--- A sack, or the free-slots box, by name.
-local function FindDockable(name)
-    local widget = SacksDB.widget
-    return FindGroup(name) or (widget and widget.name == name and widget or nil)
-end
 
 local function DockTarget(group)
     local dock = group.dock
@@ -210,7 +244,12 @@ local function DockTarget(group)
     local walk, steps = target, 0
     while walk and walk.dock and steps < 20 do
         walk = FindDockable(walk.dock.to)
-        if walk == group then return nil end
+        if walk == group then
+            -- Docks that loop (A to B and B to A) can't both hold, and while both are kept neither does. Saves from
+            -- before this was prevented can have one: this sack lets go, so the other one's dock holds again.
+            group.dock = nil
+            return nil
+        end
         steps = steps + 1
     end
     return target
@@ -237,6 +276,86 @@ local function PlaceOne(group, frame)
         local relativeTo = group.relativeTo and _G[group.relativeTo] or UIParent
         frame:SetPoint(group.point or DEFAULT_ANCHOR, relativeTo, group.relPoint or group.point or DEFAULT_ANCHOR,
             group.x or 0, group.y or 0)
+    end
+end
+
+-- Where a frame is on screen, in its own units, or nil while it has no place yet.
+local function Rect(frame)
+    local left, bottom, width, height = frame:GetLeft(), frame:GetBottom(), frame:GetWidth(), frame:GetHeight()
+    if not (type(left) == "number" and type(bottom) == "number" and type(width) == "number" and type(height) == "number") then return nil end
+    return { left = left, bottom = bottom, right = left + width, top = bottom + height }
+end
+
+-- Which side of `other` a sack keeps to, if it docked to it or was dropped touching it.
+local function KeepsTo(group, other)
+    if group.dock and group.dock.to == other.name then return group.dock.side end
+    for _, touch in ipairs(group.touches or {}) do
+        if touch.to == other.name then return touch.side end
+    end
+end
+
+-- Whether `group` hangs from `other` through its docks.
+local function HangsFrom(group, other)
+    local walk, steps = group, 0
+    while walk and walk.dock and steps < 20 do
+        walk = FindDockable(walk.dock.to)
+        if walk == other then return true end
+        steps = steps + 1
+    end
+    return false
+end
+
+-- Sacks that grew into each other are pushed apart. Of two that overlap, the one that moves is the one that was dropped
+-- against the other (it keeps to its side of it), else the one docked under the other, else the one lower in the list;
+-- with what is docked to it. A sack that keeps to a side moves straight out that side; otherwise the shortest way out.
+-- Nothing is saved: the push is worked out again at every placement from the saved spots and docks, so when a sack
+-- shrinks again the one it pushed goes back.
+local function PushApart(groups)
+    state.pushedBy = {}
+    local shown = {}
+    for index, group in ipairs(groups) do
+        local frame = state.frames[group]
+        if frame and frame:IsShown() then shown[#shown + 1] = { group = group, frame = frame, index = index } end
+    end
+    local function overlap(a, b)
+        return a and b and a.left < b.right and a.right > b.left and a.bottom < b.top and a.top > b.bottom
+    end
+    for _ = 1, 20 do -- a push can land a sack on another; a few rounds settle it
+        local moved = false
+        for i = 1, #shown do
+            for j = i + 1, #shown do
+                local a, b = shown[i], shown[j]
+                local ra, rb = Rect(a.frame), Rect(b.frame)
+                if overlap(ra, rb) then
+                    local mover, still, side
+                    local aSide, bSide = KeepsTo(a.group, b.group), KeepsTo(b.group, a.group)
+                    if aSide then mover, still, side = a, b, aSide
+                    elseif bSide then mover, still, side = b, a, bSide
+                    elseif HangsFrom(a.group, b.group) then mover, still = a, b
+                    elseif HangsFrom(b.group, a.group) then mover, still = b, a
+                    else mover, still = (a.index > b.index) and a or b, (a.index > b.index) and b or a end
+                    local mine, theirs = Rect(mover.frame), Rect(still.frame)
+                    local ways = {
+                        RIGHT = { theirs.right + SNAP_GAP - mine.left, 0 }, LEFT = { theirs.left - SNAP_GAP - mine.right, 0 },
+                        TOP = { 0, theirs.top + SNAP_GAP - mine.bottom }, BOTTOM = { 0, theirs.bottom - SNAP_GAP - mine.top },
+                    }
+                    local way = side and ways[side]
+                    if not way then
+                        for _, each in pairs(ways) do
+                            if not way or math.abs(each[1]) + math.abs(each[2]) < math.abs(way[1]) + math.abs(way[2]) then way = each end
+                        end
+                    end
+                    local point, relativeTo, relativePoint, x, y = mover.frame:GetPoint(1)
+                    if point then
+                        mover.frame:ClearAllPoints()
+                        mover.frame:SetPoint(point, relativeTo, relativePoint, (x or 0) + way[1], (y or 0) + way[2])
+                        state.pushedBy[mover.group] = still.group
+                        moved = true
+                    end
+                end
+            end
+        end
+        if not moved then break end
     end
 end
 
@@ -293,6 +412,22 @@ local function PlaceGroups()
         end
         if hidden then frame:Hide() else frame:Show() end
     end
+    if not vendor then PushApart(groups) end
+end
+
+-- In words, for the tooltip of a sack's title: what it is docked to, or what pushed it aside.
+local SIDE_WORDS = { RIGHT = "to the right of", LEFT = "to the left of", TOP = "on top of", BOTTOM = "under" }
+local function DockWords(group)
+    local lines = {}
+    local target = DockTarget(group)
+    if target then
+        lines[#lines + 1] = "Docked " .. (SIDE_WORDS[group.dock.side] or "to") .. " " .. target.name .. ": it follows that sack."
+    else
+        lines[#lines + 1] = "Not docked: it stays where you put it. Drop it flush against a sack to dock it there."
+    end
+    local pusher = state.pushedBy and state.pushedBy[group]
+    if pusher then lines[#lines + 1] = "Pushed aside by " .. pusher.name .. ", which grew into it. It goes back when there is room." end
+    return lines
 end
 
 
@@ -358,4 +493,5 @@ ns.DockFrame = DockFrame
 ns.FinishDrag = FinishDrag
 ns.LayoutOf = LayoutOf
 ns.PlaceGroups = PlaceGroups
+ns.DockWords = DockWords
 ns.PlaceOne = PlaceOne

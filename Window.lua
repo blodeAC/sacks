@@ -1,12 +1,18 @@
 -- sacks: Window.lua
+-- The settings window: the list of sacks at the left (Nav.lua), and beside it one page at a time: a sack (SackTab.lua),
+-- All items (ItemsTab.lua) or Settings (SettingsTab.lua).
 local _, ns = ...
-local BuildItems, BuildLayout, BuildSacks, HEADER, ICON_SIZE, MARGIN = ns.BuildItems, ns.BuildLayout, ns.BuildSacks, ns.HEADER, ns.ICON_SIZE, ns.MARGIN
-local MakeButton, MakeText, NativeFrame, RefreshItems, RefreshLayout, RefreshSacks = ns.MakeButton, ns.MakeText, ns.NativeFrame, ns.RefreshItems, ns.RefreshLayout, ns.RefreshSacks
-local SLOT_GAP, Say, ShowTab, ToggleOwnBags, WINDOW_WIDTH = ns.SLOT_GAP, ns.Say, ns.ShowTab, ns.ToggleOwnBags, ns.WINDOW_WIDTH
+local BuildItems, BuildNav, BuildSack, BuildSettingsPage, CONTENT_TOP = ns.BuildItems, ns.BuildNav, ns.BuildSack, ns.BuildSettingsPage, ns.CONTENT_TOP
+local MARGIN, MakeText, NativeFrame = ns.MARGIN, ns.MakeText, ns.NativeFrame
+local RefreshItems, RefreshNav, RefreshSack, RefreshSettingsPage = ns.RefreshItems, ns.RefreshNav, ns.RefreshSack, ns.RefreshSettingsPage
+local Say, ToggleOwnBags, WINDOW_WIDTH, state = ns.Say, ns.ToggleOwnBags, ns.WINDOW_WIDTH, ns.state
 
 ---------------------------------------------------------------------------------------------------
 -- The window
 ---------------------------------------------------------------------------------------------------
+
+-- The pages, by the name the list uses for them, and where the window keeps each.
+local PAGES = { sack = "sack", defaults = "sack", items = "items", settings = "general" }
 
 local function BuildSettings()
     -- One window only: it is remembered the moment it exists, so a failure further down can never lead to a second one.
@@ -43,34 +49,50 @@ local function BuildSettings()
     tinsert(UISpecialFrames, "SacksSettings")
     _G.SacksSettings = window
 
-    window.tabs = {}
-    local previous
-    for _, tab in ipairs({ { "sacks", "Sacks" }, { "items", "Items" }, { "layout", "Layout" } }) do
-        local button = MakeButton(window, tab[2], nil, function() ShowTab(tab[1]) end)
-        if previous then
-            button:SetPoint("LEFT", previous, "RIGHT", SLOT_GAP, 0)
-        else
-            button:SetPoint("TOPLEFT", MARGIN, -(HEADER + 6))
-        end
-        window.tabs[tab[1]] = button
-        previous = button
-    end
-
-    window.sacks = BuildSacks(window)
+    window.active = "sack"
+    window.nav = BuildNav(window)
+    window.sack = BuildSack(window)
     window.items = BuildItems(window)
-    window.layout = BuildLayout(window)
-    window.active = "sacks"
+    window.general = BuildSettingsPage(window)
+    for _, key in pairs(PAGES) do
+        local page = window[key]
+        page:SetPoint("TOPLEFT", window.nav, "TOPRIGHT", MARGIN, 0)
+        page:Hide()
+    end
+end
+
+-- Sizes the window to the list and the page shown: as wide as both, as tall as the taller.
+function ns.FitWindow(pageHeight)
+    local window, nav = ns.settings, ns.settings.nav
+    local height = math.max(pageHeight or 0, nav.height or 0)
+    nav.edge:SetHeight(height)
+    window:SetSize((nav.width or 0) + MARGIN + WINDOW_WIDTH, CONTENT_TOP + height + MARGIN)
 end
 
 function ns.RefreshSettings()
-    if not ns.settings or not ns.settings:IsShown() or not ns.settings.layout then return end
-    if ns.settings.active == "items" then
+    local window = ns.settings
+    if not window or not window:IsShown() or not window.general then return end
+    RefreshNav()
+    if window.active == "items" then
         RefreshItems()
-    elseif ns.settings.active == "layout" then
-        RefreshLayout()
+    elseif window.active == "settings" then
+        RefreshSettingsPage()
     else
-        RefreshSacks()
+        RefreshSack()
     end
+end
+
+-- Shows one page: "sack" (the sack picked in the list), "defaults" (the same page, for the defaults), "items" or
+-- "settings".
+function ns.ShowView(name)
+    local window = ns.settings
+    window.active = PAGES[name] and name or "sack"
+    local shown = PAGES[window.active]
+    for _, key in pairs(PAGES) do
+        if key ~= shown then window[key]:Hide() end
+    end
+    window[shown]:Show()
+    ns.RefreshSettings()
 end
 
 -- Anything that goes wrong while building or filling the window is printed, never swallowed.
@@ -80,12 +102,21 @@ local function Guard(step, ...)
     return ok
 end
 
-function ns.ToggleSettings()
+-- Builds the window the first time it is needed. Returns whether it is there.
+local function EnsureWindow()
     if not ns.settings then
         Guard(BuildSettings)
-        if ns.settings and ns.settings.layout then Guard(ShowTab, "sacks") end
+        if ns.settings and ns.settings.general then
+            ns.settings:Show()
+            Guard(ns.ShowView, "sack")
+            ns.settings:Hide()
+        end
     end
-    if not ns.settings then return end
+    return ns.settings and ns.settings.general and true or false
+end
+
+function ns.ToggleSettings()
+    if not EnsureWindow() then return end
     if ns.settings:IsShown() then
         ns.settings:Hide()
     else
@@ -94,28 +125,33 @@ function ns.ToggleSettings()
     end
 end
 
+-- Opens the window on one sack's page (right-click a sack, or a sack named in the All items table).
+function ns.EditSack(group)
+    if not EnsureWindow() then return end
+    state.editing = group
+    ns.settings:Show()
+    Guard(ns.ShowView, "sack")
+end
+
 -- A small bag icon you can drag anywhere; clicking it opens the settings.
 local function MakeIcon()
     SacksDB.icon = SacksDB.icon or {}
     local saved = SacksDB.icon
     saved.angle = saved.angle or 200
     local host = Minimap or UIParent
+    -- Built like spelltips' button: the tracking-border art is drawn for a 31-pixel button with the icon in its middle,
+    -- so the button is exactly that size and the ring sits centred on the edge of the minimap.
     local button = CreateFrame("Button", "SacksIcon", host)
-    button:SetSize(ICON_SIZE, ICON_SIZE)
+    button:SetSize(31, 31)
     button:SetFrameStrata("MEDIUM")
     button:SetFrameLevel(8)
     button:RegisterForDrag("LeftButton")
     button:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     button.dragged = false
-    local background = button:CreateTexture(nil, "BACKGROUND")
-    background:SetSize(25, 25)
-    background:SetPoint("TOPLEFT", 3, -3)
-    background:SetTexture("Interface\\Minimap\\UI-Minimap-Background")
-    button.texture = button:CreateTexture(nil, "ARTWORK")
+    button.texture = button:CreateTexture(nil, "BACKGROUND")
     button.texture:SetSize(20, 20)
-    button.texture:SetPoint("TOPLEFT", 6, -5)
+    button.texture:SetPoint("CENTER", 0, 1)
     button.texture:SetTexture("Interface\\Icons\\INV_Misc_Bag_08")
-    button.texture:SetTexCoord(0.05, 0.95, 0.05, 0.95)
     local border = button:CreateTexture(nil, "OVERLAY")
     border:SetSize(53, 53)
     border:SetPoint("TOPLEFT")
@@ -124,7 +160,7 @@ local function MakeIcon()
 
     -- Sits on the edge of the minimap at an angle you choose by dragging it around.
     local function place()
-        local radius = (Minimap and Minimap:GetWidth() or 140) / 2 + 10
+        local radius = (Minimap and Minimap:GetWidth() or 140) / 2 + 5
         local angle = math.rad(saved.angle)
         button:ClearAllPoints()
         button:SetPoint("CENTER", host, "CENTER", math.cos(angle) * radius, math.sin(angle) * radius)

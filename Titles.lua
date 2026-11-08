@@ -12,15 +12,7 @@ local TITLE_PIECES = {
     { token = "{special}", about = "free slots in special bags" },
 }
 
-local function Money(copper)
-    copper = math.floor(copper or 0)
-    if GetCoinTextureString then return GetCoinTextureString(copper) end
-    local gold, silver, rest = math.floor(copper / 10000), math.floor(copper / 100) % 100, copper % 100
-    local text = ""
-    if gold > 0 then text = text .. gold .. "|cffffd700g|r " end
-    if silver > 0 or gold > 0 then text = text .. silver .. "|cffc7c7cfs|r " end
-    return text .. rest .. "|cffeda55fc|r"
-end
+local function Money(copper) return ns.CoinText(copper) end
 
 local function ExpandTitle(group, items, free, special)
     local stacks, value = 0, 0
@@ -30,7 +22,7 @@ local function ExpandTitle(group, items, free, special)
         value = value + (item.sellPrice or 0) * count
     end
     local pieces = { name = group.name, count = #items, items = stacks, value = Money(value), free = free, special = special }
-    local template = group.titleText or TITLE_DEFAULT
+    local template = group.titleText or ns.Default("titleText", TITLE_DEFAULT)
     return (template:gsub("{(%w+)}", function(token)
         local found = pieces[token:lower()]
         if found ~= nil then return tostring(found) end

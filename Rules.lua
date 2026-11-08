@@ -151,7 +151,7 @@ function Stat.Options(field)
     return options
 end
 
--- The fields a rule line can test, in the order the pickers list them (Items tab and Layout tab share this).
+-- The fields a rule line can test, in the order the pickers list them (the Takes lines and the sort steps share this).
 local function RuleFields()
     return { { label = "Class", value = "class" }, { label = "Subclass", value = "sub" },
         { label = "Quality", value = "quality" }, { label = "Name", value = "name" },
@@ -320,7 +320,7 @@ local function ValueText(condition, rule)
     return tostring(condition.value)
 end
 
--- A line of a rule in three pieces, as the Items tab shows it: what is tested, how, and against what.
+-- A line of a rule in three pieces, as the rule lines show it: what is tested, how, and against what.
 local function ClauseParts(condition, rule)
     return FIELD_TEXT[condition.field] or STATS[condition.field].text, OP_TEXT[condition.op], ValueText(condition, rule)
 end

@@ -116,6 +116,20 @@ local function MakeModal(name)
     dialog.box.back = dialog.box:CreateTexture(nil, "BACKGROUND")
     dialog.box.back:SetAllPoints()
     dialog.box.back:SetColorTexture(0.05, 0.05, 0.05, 0.95)
+    -- a thin gold border, so the box stands out from what is behind it
+    for _, side in ipairs({ "TOP", "BOTTOM", "LEFT", "RIGHT" }) do
+        local edge = dialog.box:CreateTexture(nil, "BORDER")
+        edge:SetColorTexture(1, 0.82, 0, 0.7)
+        if side == "TOP" or side == "BOTTOM" then
+            edge:SetPoint(side .. "LEFT", 0, 0)
+            edge:SetPoint(side .. "RIGHT", 0, 0)
+            edge:SetHeight(1)
+        else
+            edge:SetPoint("TOP" .. side, 0, 0)
+            edge:SetPoint("BOTTOM" .. side, 0, 0)
+            edge:SetWidth(1)
+        end
+    end
     dialog:Hide()
     if tinsert and UISpecialFrames then tinsert(UISpecialFrames, name) end
     return dialog
@@ -287,7 +301,7 @@ local function MakeChoice(parent, title, x, y, getOptions, onChange, width)
     choice.width = width
     if menu then
         choice.frame = menu
-        menu:SetPoint("TOPLEFT", parent, "TOPLEFT", x - DROPDOWN_INSET, y - below)
+        menu:SetPoint("TOPLEFT", parent, "TOPLEFT", x - ns.DROPDOWN_ART_LEFT, y - below) -- its box starts at x
         UIDropDownMenu_SetWidth(menu, width)
         UIDropDownMenu_Initialize(menu, function(_, level)
             for index, option in ipairs(getOptions()) do
@@ -326,8 +340,10 @@ local function MakeChoice(parent, title, x, y, getOptions, onChange, width)
     -- Moves the box so its visible left edge is at x.
     function choice.moveTo(left, top)
         choice.frame:ClearAllPoints()
-        choice.frame:SetPoint("TOPLEFT", parent, "TOPLEFT", left - (menu and DROPDOWN_INSET or 0), (top or y) - below)
+        choice.frame:SetPoint("TOPLEFT", parent, "TOPLEFT", left - (menu and ns.DROPDOWN_ART_LEFT or 0), (top or y) - below)
     end
+    -- How wide the box you see is.
+    function choice.seen() return choice.width + (menu and ns.DROPDOWN_RIGHT or DROPDOWN_INSET) end
     function choice.value() return current().value end
     function choice.reset()
         choice.index = 1
@@ -361,6 +377,125 @@ local function MakeChoice(parent, title, x, y, getOptions, onChange, width)
 end
 
 -- Adds a sack from a name and a rule, telling you why if it can't.
+---------------------------------------------------------------------------------------------------
+-- Parts of a page, and rows you drag into a new order
+---------------------------------------------------------------------------------------------------
+
+-- The top of a part of a page, `y` down from the top of `parent`: a gold crease the whole `width` across, and the part's
+-- title under it in the bigger gold font. Returns the title; the part's content starts ns.ZONE_HEIGHT below `y`.
+local function MakeZoneTop(parent, y, text, width)
+    local crease = parent:CreateTexture(nil, "ARTWORK")
+    crease:SetColorTexture(1, 0.82, 0, 0.55)
+    crease:SetPoint("TOPLEFT", 0, -(y + ns.PADDING))
+    crease:SetSize(width, ns.CREASE)
+    local title = parent:CreateFontString(nil, "OVERLAY", "SacksZoneFont")
+    title:SetPoint("TOPLEFT", 0, -(y + ns.PADDING + ns.CREASE + ns.PADDING))
+    title:SetJustifyH("LEFT")
+    title:SetText(text)
+    title.crease = crease
+    return title
+end
+
+-- How far down from a part's top its title row is centred: for lining controls up with the title.
+local function ZoneTitleMiddle()
+    return ns.PADDING + ns.CREASE + ns.PADDING + ns.ZONE_TITLE_HEIGHT / 2
+end
+
+-- Six dots, `height` tall and ns.GRIP_WIDTH wide, that a row is dragged by. Returns the button that holds them.
+local function MakeGrip(parent, height)
+    local grip = CreateFrame("Button", nil, parent)
+    grip:SetSize(ns.GRIP_WIDTH, height)
+    local dot = math.max(2, math.floor(ns.SLOT_GAP / 2))
+    grip.dots = {}
+    for column = 0, 1 do
+        for line = -1, 1 do
+            local texture = grip:CreateTexture(nil, "ARTWORK")
+            texture:SetSize(dot, dot)
+            texture:SetColorTexture(1, 1, 1, 0.35)
+            texture:SetPoint("CENTER", grip, "CENTER", (column - 0.5) * 2 * dot, line * 2 * dot)
+            grip.dots[#grip.dots + 1] = texture
+        end
+    end
+    grip:RegisterForDrag("LeftButton")
+    -- the dots' colour at rest: faint grey when there is nothing to move the row past
+    local function rest(self)
+        local alpha = self.usable and 0.35 or 0.12
+        for _, texture in ipairs(self.dots) do texture:SetColorTexture(1, 1, 1, alpha) end
+    end
+    -- Greys the dots out (and stops the drag) when the row is the only one.
+    function grip.SetUsable(on)
+        grip.usable = on and true or false
+        rest(grip)
+    end
+    grip:SetScript("OnEnter", function(self)
+        if not self.usable then return end
+        for _, texture in ipairs(self.dots) do texture:SetColorTexture(1, 0.82, 0, 0.9) end
+        GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+        GameTooltip:SetText("Drag to move", 1, 1, 1)
+        GameTooltip:Show()
+    end)
+    grip:SetScript("OnLeave", function(self)
+        rest(self)
+        GameTooltip:Hide()
+    end)
+    grip.SetUsable(true)
+    return grip
+end
+
+-- Makes `grip` drag a row to a new place among its fellows. rows() gives the frames of every row, top to bottom; index()
+-- says which of them this one is; drop(from, to) moves it. While you drag, a gold line on `owner` marks where it would go
+-- and the row you hold (`held`) fades. The mouse is only followed while you drag.
+local function Reorderable(grip, owner, rows, index, drop, held)
+    if not owner.dropLine then
+        owner.dropLine = owner:CreateTexture(nil, "OVERLAY")
+        owner.dropLine:SetColorTexture(1, 0.82, 0, 0.9)
+        owner.dropLine:SetHeight(ns.CREASE)
+        owner.dropLine:Hide()
+    end
+    local line = owner.dropLine
+    -- the row the dragged one would go in front of (one past the last for the end), and the row whose edge marks it
+    local function Target()
+        local list = rows()
+        local _, cursorY = GetCursorPosition()
+        cursorY = cursorY / grip:GetEffectiveScale()
+        for at, row in ipairs(list) do
+            local top, bottom = row:GetTop(), row:GetBottom()
+            if type(top) == "number" and type(bottom) == "number" and cursorY > (top + bottom) / 2 then return at, row, list end
+        end
+        return #list + 1, list[#list], list
+    end
+    local function Track()
+        local before, mark, list = Target()
+        line:ClearAllPoints()
+        if not mark then return line:Hide() end
+        if before > #list then
+            line:SetPoint("TOPLEFT", mark, "BOTTOMLEFT", 0, 1)
+            line:SetPoint("TOPRIGHT", mark, "BOTTOMRIGHT", 0, 1)
+        else
+            line:SetPoint("BOTTOMLEFT", mark, "TOPLEFT", 0, -1)
+            line:SetPoint("BOTTOMRIGHT", mark, "TOPRIGHT", 0, -1)
+        end
+        line:Show()
+    end
+    grip:SetScript("OnDragStart", function(self)
+        if not self.usable then return end
+        self.dragging = true
+        GameTooltip:Hide()
+        if held then held:SetAlpha(0.5) end
+        self:SetScript("OnUpdate", Track)
+    end)
+    grip:SetScript("OnDragStop", function(self)
+        if not self.dragging then return end
+        self.dragging = false
+        self:SetScript("OnUpdate", nil)
+        line:Hide()
+        if held then held:SetAlpha(1) end
+        local from, before = index(), Target()
+        if before == from or before == from + 1 then return end -- dropped where it already was
+        drop(from, before > from and before - 1 or before)
+    end)
+end
+
 local function AddSack(name, rule)
     if #rule == 0 then return Say("pick at least one thing for the sack to take") end
     local group, problem = CreateSack(name, rule)
@@ -379,6 +514,10 @@ ns.MakeButton = MakeButton
 ns.MakeCheck = MakeCheck
 ns.MakeChoice = MakeChoice
 ns.MakeText = MakeText
+ns.MakeGrip = MakeGrip
+ns.MakeZoneTop = MakeZoneTop
+ns.Reorderable = Reorderable
+ns.ZoneTitleMiddle = ZoneTitleMiddle
 ns.NativeFrame = NativeFrame
 ns.MakeTextBox = MakeTextBox
 ns.MakeNote = MakeNote

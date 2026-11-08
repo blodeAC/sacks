@@ -93,16 +93,16 @@ end
 local HELP = {
     "/sacks - open the settings window (or click the bag icon)",
     "/sacks list - show every sack and what it takes",
-    "/sacks new <name> class=.. sub=.. quality=.. minq=.. maxq=.. id=.. - make a sack; the newest sack is checked first",
+    "/sacks new <name> class=.. sub=.. quality=.. minq=.. maxq=.. id=.. - make a sack. The newest sack is checked first.",
     "/sacks remove <name>",
-    "/sacks cols <name or all> <number> - how many slots per row; all sets the default for every sack",
-    "/sacks anchor <name> <frame> - pin a sack to a named frame (e.g. MinimapCluster); drag its title bar to unpin",
+    "/sacks cols <name or all> <number> - how many slots per row. all sets the default for every sack.",
+    "/sacks anchor <name> <frame> - pin a sack to a named frame (e.g. MinimapCluster). Drag its title bar to unpin.",
     "/sacks classes - the item classes and subclasses you can use",
     "/sacks fields - every detail the game gives for the item under the mouse (or /sacks fields [item link])",
     "/sacks probe - list every item in your bags with its class, subclass and quality",
     "/sacks bags - open or close the game's own bags",
-    "/sacks errors - the last errors this add-on raised (kept across reloads); /sacks errors clear empties it",
-    "/sacks counts - record bag/cast events and the counts the game reports (show, clear); for finding out why a count lags in combat",
+    "/sacks errors - the last errors this add-on raised (kept across reloads). /sacks errors clear empties it.",
+    "/sacks counts - record bag/cast events and the counts the game reports (show, clear). For finding out why a count lags in combat.",
     "/sacks reset - back to the starting sacks",
     "Drag a sack by its title bar to move it.",
 }
@@ -151,6 +151,7 @@ function commands.cols(args)
     columns = math.floor(columns)
     if args[1]:lower() == "all" then
         SacksDB.columns = columns -- the default for every sack without its own number
+        if SacksDB.defaults then SacksDB.defaults.cols = nil end
     else
         local group = FindGroup(args[1])
         if not group then return Say("no sack called " .. args[1]) end

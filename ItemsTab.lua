@@ -1,15 +1,14 @@
 -- sacks: ItemsTab.lua
 local _, ns = ...
-local AddSack, AllGroups, BUTTON_HEIGHT, BitAnd, CHOICE_WIDTH, CONTENT_TOP = ns.AddSack, ns.AllGroups, ns.BUTTON_HEIGHT, ns.BitAnd, ns.CHOICE_WIDTH, ns.CONTENT_TOP
+local AllGroups, BUTTON_HEIGHT, BitAnd, CONTENT_TOP = ns.AllGroups, ns.BUTTON_HEIGHT, ns.BitAnd, ns.CONTENT_TOP
 local ClassOptions, DROPDOWN_HEIGHT, Describe, FindGroup, ItemClassInfo = ns.ClassOptions, ns.DROPDOWN_HEIGHT, ns.Describe, ns.FindGroup, ns.ItemClassInfo
 local ItemSubClassInfo, LINE_HEIGHT, LastBag, MARGIN, MakeButton, MakeChoice = ns.ItemSubClassInfo, ns.LINE_HEIGHT, ns.LastBag, ns.MARGIN, ns.MakeButton, ns.MakeChoice
 local MakeText, Matches, OperatorOptions, PADDING, PatternError = ns.MakeText, ns.Matches, ns.OperatorOptions, ns.PADDING, ns.PatternError
 local QualityName, QualityOptions, Refresh, STATS, Say, Stat = ns.QualityName, ns.QualityOptions, ns.Refresh, ns.STATS, ns.Say, ns.Stat
 local SubClassOptions, TABLE_ROW_HEIGHT, TextMatches, ValueText, WHEEL_STEP, WINDOW_WIDTH = ns.SubClassOptions, ns.TABLE_ROW_HEIGHT, ns.TextMatches, ns.ValueText, ns.WHEEL_STEP, ns.WINDOW_WIDTH
 local state = ns.state
-local ButtonWidth, MOVE_WIDTH, SLOT_GAP, TextWidth, DROPDOWN_INSET, LABEL_HEIGHT = ns.ButtonWidth, ns.MOVE_WIDTH, ns.SLOT_GAP, ns.TextWidth, ns.DROPDOWN_INSET, ns.LABEL_HEIGHT
-local NAME_WIDTH, MakeTextBox = ns.NAME_WIDTH, ns.MakeTextBox
-local SACK_X = math.ceil(TextWidth("Sack", "GameFontHighlight")) + PADDING
+local ButtonWidth, SLOT_GAP, TextWidth, DROPDOWN_INSET, LABEL_HEIGHT = ns.ButtonWidth, ns.SLOT_GAP, ns.TextWidth, ns.DROPDOWN_INSET, ns.LABEL_HEIGHT
+local NAME_WIDTH, MakeTextBox, ItemInfo, CreateSack = ns.NAME_WIDTH, ns.MakeTextBox, ns.ItemInfo, ns.CreateSack
 local NUMBER_WIDTH = math.ceil(TextWidth(string.rep("0", 8))) + 2 * PADDING
 local TEXT_MIN = math.ceil(TextWidth(string.rep("M", 6))) + 2 * PADDING -- the least a pattern box may shrink to
 local WARN_WIDTH = math.ceil(TextWidth("bad pattern", "GameFontNormalSmall")) + PADDING
@@ -18,7 +17,9 @@ local INFO_HEIGHT = LABEL_HEIGHT + SLOT_GAP
 local SUMMARY_HEIGHT = 2 * LABEL_HEIGHT + PADDING
 
 ---------------------------------------------------------------------------------------------------
--- Items: every kind of item you carry (or have carried), with what the game says about it
+-- All items: every kind of item you carry (or have carried), with what the game says about it and the sack it goes
+-- to. Select items to make a sack from what they share. This file also holds the rule lines (what a sack takes), which
+-- the sack page and the sort steps use.
 ---------------------------------------------------------------------------------------------------
 
 local sort = { key = "class", descending = false }
@@ -102,8 +103,8 @@ local function Fixed(column)
     return column.fitted
 end
 
--- Which columns the table shows now: the fixed ones, then extras for every fact the lines test and for the defaults
--- (reagent flag, special bag type) while there is room. The last column takes whatever width is left.
+-- Which columns the table shows now: the fixed ones, then extras for every fact the lines test (on a sack's page) and
+-- for the reagent flag and the special bag type, while there is room. The last column takes whatever width is left.
 local function ActiveColumns(page)
     local base = 0
     for _, column in ipairs(COLUMNS) do
@@ -139,7 +140,12 @@ local function ColumnWidth(column, active)
 end
 
 -- One row per item kind: what is in your bags now, plus every kind you have seen before (shown with 0).
+-- The rows are worked out once per refresh of the sacks (and again when the table is sorted another way), however many
+-- times they are asked for in between: the pages, the line editor and typing an item's name all use the same rows.
+local rowsCache, rowsKey
 local function BuildItemRows()
+    local key = tostring(state.generation or 0) .. ":" .. tostring(sort.key) .. ":" .. tostring(sort.descending)
+    if rowsCache and rowsKey == key then return rowsCache end
     local rows, byId = {}, {}
     local function add(id, fields, count)
         local row = byId[id]
@@ -185,6 +191,7 @@ local function BuildItemRows()
         end
         return a.name:lower() < b.name:lower()
     end)
+    rowsCache, rowsKey = rows, key
     return rows
 end
 
@@ -228,9 +235,9 @@ local function Shared(selected)
     return shared
 end
 
--- The sack being built or changed on the Items tab is a draft: a list of lines you can add, remove and reorder.
+-- A sack's lines are edited as a draft: a list of lines you can add, remove and reorder. Lines that say nothing yet (an
+-- empty text, an item not found) are left out of the rule the draft makes.
 local MAX_LINES = 10
-local NEW_SACK = { name = "New sack" }
 local GATE_OPTIONS = { { label = "and", value = "AND" }, { label = "or", value = "OR" } }
 
 local function NewCondition(field)
@@ -253,14 +260,16 @@ local function CopyCondition(condition)
     return copy
 end
 
--- What the lines currently say: empty name lines are left out, and the first line has no join.
-local function DraftRule(page)
+-- What the lines currently say: lines that say nothing yet are left out, and the first line has no join.
+local function DraftRule(draft)
     local rule = {}
-    for _, condition in ipairs(page.draft) do
-        local empty = (condition.field == "name" or condition.field == "tooltip") and (type(condition.value) ~= "string" or condition.value == "")
+    for _, condition in ipairs(draft) do
+        local text = condition.field == "name" or condition.field == "tooltip"
+        local empty = (text and (type(condition.value) ~= "string" or condition.value == ""))
+            or (condition.field == "item" and not condition.value)
         if not empty then
             local copy = CopyCondition(condition)
-            copy.auto = nil
+            copy.auto, copy.typed = nil, nil
             if #rule == 0 then copy.join = nil end
             rule[#rule + 1] = copy
         end
@@ -268,24 +277,11 @@ local function DraftRule(page)
     return rule
 end
 
-local function SackPickOptions()
-    local options = { { label = "New sack", value = NEW_SACK } }
-    for _, group in ipairs(AllGroups()) do
-        if not group.fixed and not group.builtin then options[#options + 1] = { label = group.name, value = group } end
-    end
-    return options
-end
-
-local function LoadSack(page, group)
-    page.target = group or false
-    page.draft = {}
-    if group then
-        for _, condition in ipairs(group.rule) do page.draft[#page.draft + 1] = CopyCondition(condition) end
-    end
-    state.selected = {}
-    page.sackPick.select(group or NEW_SACK)
-    page.suggested = nil
-    page.nameEdit:SetText(group and group.name or "")
+-- An item's name, from what the game told us when you carried it, else from the game now.
+local function ItemName(id)
+    local seen = id and SacksDB.seen and SacksDB.seen[id]
+    if seen and seen.name then return seen.name end
+    return id and ItemInfo and ItemInfo(id) or nil
 end
 
 -- Descriptive CamelCase names for a new sack, built from what it takes: LeatherArmor, Junk, EpicCloth...
@@ -356,6 +352,7 @@ local function PassesFilter(row, page)
     local mode = page.show and page.show.value() or "bags"
     if mode == "bags" and row.count == 0 then return false end
     if mode == "unsorted" and (row.count == 0 or row.sack ~= SacksDB.fallback.name) then return false end
+    if mode == "fits" and not (page.fits and page.fits(row)) then return false end
     local search = page.search and page.search:GetText() or ""
     if type(search) == "string" and search ~= "" then
         local op = PatternError(search) and "contains" or "matches"
@@ -364,27 +361,14 @@ local function PassesFilter(row, page)
     return true
 end
 
-local function SelectionChanged()
-    local page = ns.settings.items
-    local selected = SelectedRows(BuildItemRows())
-    -- While changing an existing sack the lines are the sack's own; a selected item is only there for "Exact item".
-    -- Lines made from an earlier click ("auto") are replaced; lines that belong to the sack are not.
-    local manual = false
-    for _, line in ipairs(page.draft) do
-        if not line.auto then manual = true end
-    end
-    if page.target and manual then return ns.RefreshSettings() end
-    -- For a new sack, the lines made from a selection are replaced each time the selection changes (lines you
-    -- edited by hand are yours and stay). Items sharing a class (and subclass) give those lines; otherwise a
-    -- shared quality; otherwise the items themselves, each as an "Exact item" line joined with or.
-    for index = #page.draft, 1, -1 do
-        if page.draft[index].auto then table.remove(page.draft, index) end
-    end
+-- The lines for a sack that takes the selected items. Items sharing a bag type, or a class (and subclass), give those
+-- lines; otherwise whatever else they share; otherwise the items themselves, each as an "Exact item" line joined with or.
+local function RuleFromSelection(selected)
+    local rule = {}
     local added = 0
     local function add(condition)
-        condition.auto = true
-        if #page.draft < MAX_LINES then
-            page.draft[#page.draft + 1] = condition
+        if #rule < MAX_LINES then
+            rule[#rule + 1] = condition
             added = added + 1
         end
     end
@@ -407,13 +391,23 @@ local function SelectionChanged()
             end
         end
     end
-    ns.RefreshSettings()
+    return rule
 end
 
--- x, Up and Down sit at the left of a line; the boxes flow left to right from just past them, each as wide as its widest text
-local UP_X = ButtonWidth("x") + SLOT_GAP
-local DOWN_X = UP_X + MOVE_WIDTH + SLOT_GAP
-local LINE_START = DOWN_X + MOVE_WIDTH + PADDING
+-- Makes a sack that takes what the rule says, named from it, and opens it on the sack page.
+local function SackFromRule(rule, itemName)
+    local group, problem = CreateSack(UniqueName(SuggestName(rule, itemName)), rule)
+    if not group then return Say(problem) end
+    Say("made the sack " .. group.name .. ": " .. Describe(rule))
+    state.selected = {}
+    Refresh()
+    ns.EditSack(group)
+end
+
+-- A line starts with the dots you drag it by, then "Take if" (or its and/or box); its x is at the right edge. The boxes
+-- flow left to right, each as wide as its widest text, one PADDING apart.
+local LINE_START = ns.GRIP_WIDTH
+local REMOVE_ROOM = ButtonWidth("x") + PADDING -- the x at the right edge, and the gap before it
 
 local function FieldOptions()
     local options = ns.RuleFields()
@@ -453,8 +447,9 @@ local function MakeScrollbar(parent, x, top, onScroll)
         offset = math.max(0, math.min(bar.total - bar.visible, math.floor(offset + 0.5)))
         if offset ~= bar.offset then onScroll(offset) end
     end
-    function bar.set(total, visible, offset, height, newTop)
+    function bar.set(total, visible, offset, height, newTop, newX)
         if newTop then top = newTop end
+        if newX then x = newX end
         bar.total, bar.visible, bar.offset = total, visible, offset
         bar:ClearAllPoints()
         bar:SetPoint("TOPLEFT", x, -top)
@@ -470,41 +465,41 @@ local function MakeScrollbar(parent, x, top, onScroll)
         bar.thumb:ClearAllPoints()
         bar.thumb:SetPoint("TOPLEFT", bar, "TOPLEFT", 0, -(bar.travel * offset / (total - visible)))
     end
-    bar.thumb:SetScript("OnMouseDown", function()
-        bar.dragging, bar.startCursor, bar.startOffset = true, cursor(), bar.offset
-    end)
-    bar.thumb:SetScript("OnMouseUp", function() bar.dragging = false end)
-    bar:SetScript("OnMouseDown", function()
-        local thumbTop = bar:GetTop() - bar.travel * bar.offset / math.max(1, bar.total - bar.visible)
-        go(bar.offset + (cursor() > thumbTop and -bar.visible or bar.visible))
-    end)
-    bar:SetScript("OnUpdate", function()
-        if not bar.dragging then return end
+    -- While the thumb is held (and only then) it follows the mouse each frame.
+    local function follow()
         if IsMouseButtonDown and not IsMouseButtonDown("LeftButton") then
             bar.dragging = false
+            bar:SetScript("OnUpdate", nil)
             return
         end
         if bar.travel > 0 then
             go(bar.startOffset + (bar.startCursor - cursor()) / bar.travel * (bar.total - bar.visible))
         end
+    end
+    bar.thumb:SetScript("OnMouseDown", function()
+        bar.dragging, bar.startCursor, bar.startOffset = true, cursor(), bar.offset
+        bar:SetScript("OnUpdate", follow)
+    end)
+    bar.thumb:SetScript("OnMouseUp", function()
+        bar.dragging = false
+        bar:SetScript("OnUpdate", nil)
+    end)
+    bar:SetScript("OnMouseDown", function()
+        local thumbTop = bar:GetTop() - bar.travel * bar.offset / math.max(1, bar.total - bar.visible)
+        go(bar.offset + (cursor() > thumbTop and -bar.visible or bar.visible))
     end)
     return bar
 end
 
--- The field picker of a line changed: start a new condition for the field. An exact item takes the one item that is
--- selected in the table; a subclass starts in the class of the first Class line there is.
+-- The field picker of a line changed: start a new condition for the field. An exact item starts as the one item
+-- selected in the All items table, if there is one, else empty for you to type its name; a subclass starts in the
+-- class of the first Class line there is.
 local function ChangeField(line, page, changed)
     local field = line.field.value()
     if field == line.clause.field then return end
     local condition
     if field == "item" then
-        local id = Shared(SelectedRows(BuildItemRows())).id
-        if not id then
-            Say("select exactly one item in the table first, then choose Exact item")
-            line.field.select(line.clause.field)
-            return
-        end
-        condition = { field = "item", op = "=", value = id }
+        condition = { field = "item", op = "=", value = Shared(SelectedRows(BuildItemRows())).id }
     else
         condition = NewCondition(field)
         if field == "sub" then
@@ -547,30 +542,28 @@ local function ChangeClass(line, changed)
     changed()
 end
 
--- The buttons of a line: x, Up and Down, and the words in front of the first line.
+-- The dots you drag a line by, its x, and the words in front of the first line.
 local function MakeLineButtons(line, page, changed, plainY)
-    -- Reordering keeps each and/or where it is, so the first line never carries one.
-    local function move(by)
-        local draft, from, to = page.draft, line.index, line.index + by
-        if not draft[to] then return end
-        draft[from], draft[to] = draft[to], draft[from]
-        draft[from].join, draft[to].join = draft[to].join, draft[from].join
-        changed()
-    end
     line.remove = MakeButton(line, "x", nil, function()
         table.remove(page.draft, line.index)
         changed()
     end)
-    line.remove:SetPoint("TOPLEFT", 0, plainY)
-    if rawget(page, "compact") then
-        -- Inside a sort step the line has no buttons of its own except x on lines after the first, at the right edge.
-        line.remove:ClearAllPoints()
-        line.remove:SetPoint("TOPRIGHT", 0, plainY)
-    end
-    line.up = MakeButton(line, "Up", MOVE_WIDTH, function() move(-1) end)
-    line.up:SetPoint("TOPLEFT", UP_X, plainY)
-    line.down = MakeButton(line, "Down", MOVE_WIDTH, function() move(1) end)
-    line.down:SetPoint("TOPLEFT", DOWN_X, plainY)
+    line.remove:SetPoint("TOPRIGHT", 0, plainY)
+    -- Dragging a line to a new place keeps each and/or where it is, so the first line never carries one.
+    line.grip = ns.MakeGrip(line, BUTTON_HEIGHT)
+    line.grip:SetPoint("TOPLEFT", 0, plainY) -- level with the buttons
+    ns.Reorderable(line.grip, page, function()
+        local shown = {}
+        for index = 1, #page.draft do shown[index] = page.lines[index] end
+        return shown
+    end, function() return line.index end, function(from, to)
+        local draft = page.draft
+        local joins = {}
+        for index, clause in ipairs(draft) do joins[index] = clause.join end
+        table.insert(draft, to, table.remove(draft, from))
+        for index, clause in ipairs(draft) do clause.join = joins[index] end
+        changed()
+    end, line)
 
     line.firstText = MakeText(line, "GameFontHighlight", "TOPLEFT", LINE_START, plainY - TEXT_DROP)
     line.firstText:SetText("Take if")
@@ -611,6 +604,21 @@ local function MakeLineChoices(line, page, changed)
     end)
 end
 
+-- The item you mean by a name you typed: the one whose name it is, or the only one whose name has it in it. Looks
+-- through everything you carry or have carried. Returns the item (or nil) and how many items the text fits.
+local function FindItem(text)
+    text = tostring(text or ""):match("^%s*(.-)%s*$"):lower()
+    if text == "" then return nil, 0 end
+    local found, count = nil, 0
+    for _, row in ipairs(BuildItemRows()) do
+        local name = row.name:lower()
+        if name == text then return row.itemID, 1 end
+        if name:find(text, 1, true) then found, count = row.itemID, count + 1 end
+    end
+    if count == 1 then return found, 1 end
+    return nil, count
+end
+
 -- What you can type in a text box, shown when the mouse is over it. A "matches pattern" line takes the full set of symbols;
 -- the other lines only split alternatives with |.
 local PATTERN_SYMBOLS = {
@@ -621,6 +629,14 @@ local PATTERN_SYMBOLS = {
 }
 
 local function ShowTextHelp(box, clause)
+    if clause and clause.field == "item" then
+        GameTooltip:SetOwner(box, "ANCHOR_TOP")
+        GameTooltip:SetText("Exact item", 1, 0.82, 0)
+        GameTooltip:AddLine("Type its name, or any part of the name that only one item you carry or have carried has.", 1, 1, 1, true)
+        GameTooltip:AddLine("Upper and lower case do not matter.", 0.5, 0.5, 0.5)
+        GameTooltip:Show()
+        return
+    end
     local pattern = clause and (clause.op == "matches" or clause.op == "!matches")
     GameTooltip:SetOwner(box, "ANCHOR_TOP")
     GameTooltip:SetText(pattern and "Pattern" or "Text", 1, 0.82, 0)
@@ -650,8 +666,14 @@ local function MakeLineEntry(line, changed, plainY)
     end)
 
     line.text = MakeTextBox(line, NAME_WIDTH * 2, function(self, typed)
-        if not typed then return end
-        line.clause.value = self:GetText()
+        if not typed or not line.clause then return end
+        if line.clause.field == "item" then
+            -- what you typed is kept (so the box is not rewritten under you); the item it names is the value
+            line.clause.typed = self:GetText()
+            line.clause.value = (FindItem(line.clause.typed))
+        else
+            line.clause.value = self:GetText()
+        end
         changed()
     end)
     line.text:SetPoint("TOPLEFT", LINE_START, plainY)
@@ -667,7 +689,7 @@ local function MakeLine(page)
     line.page = page
     line.clause = false -- set by FillLine; the pickers below read it when they are built
     line:SetSize(rawget(page, "lineWidth") or (WINDOW_WIDTH - MARGIN * 2), LINE_HEIGHT)
-    local plainY = -(LINE_HEIGHT - BUTTON_HEIGHT) / 2
+    local plainY = -ns.LINE_LIFT
     local function changed()
         if line.clause then line.clause.auto = nil end -- once you touch a line it is yours
         -- A list that is not a sack's own rule says what to redraw when one of its lines changes.
@@ -686,7 +708,7 @@ local function ShowLineControls(line, clause, index, count)
     if index == 1 then
         line.gate.show(false)
         line.firstText:ClearAllPoints()
-        line.firstText:SetPoint("TOPLEFT", rawget(line.page, "lineStart") or LINE_START, -((LINE_HEIGHT - BUTTON_HEIGHT) / 2 + TEXT_DROP))
+        line.firstText:SetPoint("TOPLEFT", rawget(line.page, "lineStart") or LINE_START, -(ns.LINE_LIFT + TEXT_DROP))
         line.firstText:Show()
     else
         line.firstText:Hide()
@@ -695,18 +717,12 @@ local function ShowLineControls(line, clause, index, count)
     end
     local compact = rawget(line.page, "compact")
     if compact then
-        -- the step owns the buttons; extra lines only get an x
-        line.up:Hide()
-        line.down:Hide()
+        -- the step owns the dots; extra lines only get an x
+        line.grip:Hide()
         if index == 1 then line.remove:Hide() else line.remove:Show() end
-    elseif count <= 1 then
-        line.up:Hide()
-        line.down:Hide()
     else
-        line.up:Show()
-        line.down:Show()
-        if index == 1 then line.up:Disable() else line.up:Enable() end
-        if index == count then line.down:Disable() else line.down:Enable() end
+        line.grip:Show()
+        line.grip.SetUsable(count > 1) -- greyed out when there is nowhere to drag it to
     end
 end
 
@@ -762,48 +778,50 @@ end
 -- between boxes shrink (down to a small minimum) until it fits. Returns where the row ends.
 local function PlaceBoxes(line, clause, boxes)
     local start = rawget(line.page, "lineStart") or LINE_START
-    local reserve = rawget(line.page, "lineReserve") or WARN_WIDTH
-    local lead = rawget(line.page, "lineLead")
-    local firstX = start
-    if lead then
-        -- inside a sort step every row's first box starts in the same column, past the label; the and/or box
-        -- of a later line sits at the left edge, where the label is
-        local label = line.firstText.GetStringWidth and line.firstText:GetStringWidth()
-        firstX = start + math.max(lead, (type(label) == "number" and label or 0) + 2 * PADDING)
-        line.gate.fit()
-        line.gate.moveTo(start, 0)
-        table.remove(boxes, 1)
-    end
+    local reserve = rawget(line.page, "lineReserve") or (WARN_WIDTH + REMOVE_ROOM)
+    -- The first box of every line starts in the same column: past the widest of the words in front of the first line
+    -- and the and/or box of the lines after it (which sits at the left edge, where the words are), and past the
+    -- column a sort step asks for.
+    line.gate.fit()
+    line.gate.moveTo(start, 0)
+    table.remove(boxes, 1)
+    local words = math.ceil(TextWidth(line.firstText:GetText() or "", "GameFontHighlight"))
+    local firstX = start + math.max(rawget(line.page, "lineLead") or 0, words + PADDING, line.gate.seen() + PADDING)
     local total = 0
-    for _, box in ipairs(boxes) do total = total + box.fit() end
-    -- A typing box needs room too (at least 130), so the gaps shrink to leave it that much.
-    local needsBox = clause.field == "name" or clause.field == "tooltip" or (STATS[clause.field] and STATS[clause.field].kind ~= "pick")
-    local room = WINDOW_WIDTH - MARGIN * 2 - firstX - reserve - ((lead and needsBox) and 2 * TEXT_MIN or 0)
-    local gap = 2 * DROPDOWN_INSET + PADDING -- from one fitted box to the next (the box frame is wider than its text area)
-    if #boxes > 1 and total + (#boxes - 1) * gap > room then
-        gap = math.max(PADDING, (room - total) / (#boxes - 1))
+    for _, box in ipairs(boxes) do
+        box.fit()
+        total = total + box.seen()
+    end
+    -- A typing box needs room too, so the gaps shrink (down to SLOT_GAP) to leave it at least TEXT_MIN.
+    local needsBox = clause.field == "name" or clause.field == "tooltip" or clause.field == "item" or (STATS[clause.field] and STATS[clause.field].kind ~= "pick")
+    local room = WINDOW_WIDTH - MARGIN * 2 - firstX - reserve - (needsBox and TEXT_MIN or 0)
+    local gap = PADDING
+    if #boxes > 0 and total + #boxes * gap > room then
+        gap = math.max(SLOT_GAP, (room - total) / #boxes)
     end
     local x = firstX
     for _, box in ipairs(boxes) do
         box.moveTo(x, 0)
-        x = x + box.width + gap
+        x = x + box.seen() + gap
     end
-    return x
+    return x -- where whatever follows the boxes starts
 end
 
 -- The typing box (a number or text) or the item label that follows the pickers, and the warning at the right.
 local function ShowValueEntry(line, clause, x)
     local compact = rawget(line.page, "compact")
-    local reserve = rawget(line.page, "lineReserve") or WARN_WIDTH
+    local reserve = rawget(line.page, "lineReserve") or (WARN_WIDTH + REMOVE_ROOM)
+    local warnRight = compact and reserve or REMOVE_ROOM
+    local ART = ns.TEXTBOX_ART_LEFT -- a typing box's frame sits this far right of where its art starts
     -- The two typing boxes are only hidden when this line no longer needs them. Hiding a box and showing it again
     -- would take the keyboard away from it after every letter you type.
     local wantNumber, wantText = false, false
     line.warn:ClearAllPoints()
-    line.warn:SetPoint("TOPRIGHT", -(compact and reserve or 0), -((LINE_HEIGHT - BUTTON_HEIGHT) / 2 + TEXT_DROP))
+    line.warn:SetPoint("TOPRIGHT", -warnRight, -(ns.LINE_LIFT + TEXT_DROP))
     if STATS[clause.field] and STATS[clause.field].kind ~= "pick" then
         wantNumber = true
         line.number:ClearAllPoints()
-        line.number:SetPoint("TOPLEFT", x + PADDING, -(LINE_HEIGHT - BUTTON_HEIGHT) / 2)
+        line.number:SetPoint("TOPLEFT", x + ART, -ns.LINE_LIFT)
         if not line.number:IsShown() then line.number:Show() end
         if Stat.Parse(clause.field, line.number:GetText()) ~= clause.value then
             line.number:SetText(STATS[clause.field].kind == "money" and Stat.MoneyText(clause.value) or tostring(clause.value))
@@ -814,17 +832,47 @@ local function ShowValueEntry(line, clause, x)
         end
     elseif clause.field == "name" or clause.field == "tooltip" then
         line.text:ClearAllPoints()
-        line.text:SetPoint("TOPLEFT", x + PADDING, -(LINE_HEIGHT - BUTTON_HEIGHT) / 2)
-        line.text:SetWidth(math.max(compact and TEXT_MIN or 2 * TEXT_MIN, WINDOW_WIDTH - MARGIN * 2 - x - (compact and reserve or WARN_WIDTH)))
+        line.text:SetPoint("TOPLEFT", x + ART, -ns.LINE_LIFT)
+        line.text:SetWidth(math.max(TEXT_MIN, WINDOW_WIDTH - MARGIN * 2 - x - ART - reserve))
         wantText = true
         if not line.text:IsShown() then line.text:Show() end
         if line.text:GetText() ~= clause.value then line.text:SetText(clause.value) end
         if clause.op == "matches" or clause.op == "!matches" then
             if PatternError(clause.value) then line.warn:SetText("bad pattern") end
         end
+    elseif clause.field == "item" then
+        -- a name box as wide as a long name, and what it found right after it
+        line.text:ClearAllPoints()
+        line.text:SetPoint("TOPLEFT", x + ART, -ns.LINE_LIFT)
+        line.text:SetWidth(NAME_WIDTH)
+        wantText = true
+        if not line.text:IsShown() then line.text:Show() end
+        local name = ItemName(clause.value)
+        local shown = clause.typed or name or ""
+        if line.text:GetText() ~= shown then line.text:SetText(shown) end
+        line.warn:ClearAllPoints()
+        line.warn:SetPoint("LEFT", line.text, "RIGHT", PADDING, 0)
+        if clause.value then
+            -- what a part of a name found; nothing when the box already says it
+            if name and shown:lower() ~= name:lower() then
+                line.warn:SetText(name)
+                line.warn:SetTextColor(ns.Rgb(ns.COLOR.GREEN))
+            end
+        else
+            local _, count = FindItem(clause.typed)
+            if shown == "" then
+                line.warn:SetText("type an item's name")
+                line.warn:SetTextColor(ns.Rgb(ns.COLOR.DIM))
+            elseif count == 0 then
+                line.warn:SetText("no item you have carried is called that")
+            else
+                line.warn:SetText(count .. " items fit, type more of the name")
+                line.warn:SetTextColor(ns.Rgb(ns.COLOR.AMBER))
+            end
+        end
     elseif clause.field ~= "class" and clause.field ~= "sub" and clause.field ~= "quality" and not STATS[clause.field] then
         line.itemLabel:ClearAllPoints()
-        line.itemLabel:SetPoint("TOPLEFT", x, -((LINE_HEIGHT - BUTTON_HEIGHT) / 2 + TEXT_DROP))
+        line.itemLabel:SetPoint("TOPLEFT", x, -(ns.LINE_LIFT + TEXT_DROP))
         line.itemLabel:SetText(ValueText(clause))
         line.itemLabel:Show()
     end
@@ -881,28 +929,18 @@ local function LayoutColumns(page)
     end
 end
 
--- If the sack being edited was removed, go back to making a new one.
-local function DropMissingTarget(page)
-    if page.target then
-        local found
-        for _, group in ipairs(AllGroups()) do
-            if group == page.target then found = true end
-        end
-        if not found then LoadSack(page, nil) end
-    end
-end
-
--- Marks each row that the draft rule takes, and counts the kinds of item and how many of them you hold.
-local function MarkMatches(rows, rule, previewing)
-    local matches, held = 0, 0
-    for _, row in ipairs(rows) do
-        row.matched = previewing and Matches(rule, row)
-        if row.matched then
-            matches = matches + 1
+-- How many kinds of item a rule's lines fit, of all you carry or have carried, and how many of those you hold now.
+-- (A sack higher in the list may take some of them first.)
+local function RuleTakes(rule)
+    local kinds, held = 0, 0
+    if #rule == 0 then return kinds, held end
+    for _, row in ipairs(BuildItemRows()) do
+        if Matches(rule, row) then
+            kinds = kinds + 1
             held = held + row.count
         end
     end
-    return matches, held
+    return kinds, held
 end
 
 -- The table without the rows the Show and Search boxes leave out.
@@ -914,7 +952,7 @@ local function FilteredRows(all, page)
     return rows
 end
 
--- Everything under the table follows its bottom edge; the lines come and go below that.
+-- Everything under the table follows its bottom edge.
 local function PlaceBelowTable(page, visible)
     local y = page.tableTop + visible * TABLE_ROW_HEIGHT + PADDING
     page.info:ClearAllPoints()
@@ -922,30 +960,10 @@ local function PlaceBelowTable(page, visible)
     page.summary:ClearAllPoints()
     page.summary:SetPoint("TOPLEFT", 0, -(y + INFO_HEIGHT))
     y = y + INFO_HEIGHT + SUMMARY_HEIGHT
-    page.sackLabel:ClearAllPoints()
-    page.sackLabel:SetPoint("TOPLEFT", 0, -(y + (DROPDOWN_HEIGHT - LABEL_HEIGHT) / 2))
-    page.sackPick.moveTo(SACK_X, -y)
-    page.sackHint:ClearAllPoints()
-    page.sackHint:SetPoint("TOPLEFT", SACK_X + CHOICE_WIDTH + 2 * DROPDOWN_INSET + DROPDOWN_INSET + PADDING, -(y + (DROPDOWN_HEIGHT - LABEL_HEIGHT) / 2))
-    y = y + DROPDOWN_HEIGHT
-    for index, clause in ipairs(page.draft) do
-        local line = page.lines[index] or MakeLine(page)
-        page.lines[index] = line
-        FillLine(line, clause, index, #page.draft)
-        line:ClearAllPoints()
-        line:SetPoint("TOPLEFT", 0, -y)
-        line:Show()
-        y = y + LINE_HEIGHT
-    end
-    for index = #page.draft + 1, #page.lines do page.lines[index]:Hide() end
-    page.addButton:ClearAllPoints()
-    page.addButton:SetPoint("TOPLEFT", 0, -y)
-    y = y + BUTTON_HEIGHT + PADDING
-    page.hint:ClearAllPoints()
-    page.hint:SetPoint("TOPLEFT", 0, -y)
-    y = y + page.hintHeight
-    page.nameEdit:ClearAllPoints()
-    page.nameEdit:SetPoint("TOPLEFT", PADDING, -y)
+    page.fromSelection:ClearAllPoints()
+    page.fromSelection:SetPoint("TOPLEFT", 0, -y)
+    page.forget:ClearAllPoints()
+    page.forget:SetPoint("LEFT", page.fromSelection, "RIGHT", 3 * MARGIN, 0)
     y = y + BUTTON_HEIGHT
     page.height = y
     page:SetHeight(y)
@@ -965,8 +983,13 @@ local function FillTable(page, rows, visible)
             end
             local color = ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[row.quality]
             if color and not dim then view.cells.name:SetTextColor(color.r, color.g, color.b) end
-            if state.selected[row.itemID] then view.selected:Show() else view.selected:Hide() end
-            if row.matched and not state.selected[row.itemID] then view.matched:Show() else view.matched:Hide() end
+            -- the sack is a place you can go to: drawn in gold, opened by right-clicking the row
+            view.cells.sack:SetTextColor(ns.Rgb(ns.COLOR.GOLD))
+            -- On a sack's page: green, the sack takes it; amber, its lines fit but a sack above it takes it first.
+            local mark = page.markOf and page.markOf(row)
+            if mark == "in" then view.inMark:Show() else view.inMark:Hide() end
+            if mark == "taken" then view.takenMark:Show() else view.takenMark:Hide() end
+            if not page.markOf and state.selected[row.itemID] then view.selected:Show() else view.selected:Hide() end
             view:Show()
         else
             view:Hide()
@@ -982,70 +1005,79 @@ local function MarkSortedHeader(page)
     end
 end
 
-local function Summarize(page, rows, all, visible, previewing, matches, held, selected)
+
+-- Which rows are in view, of how many (also after scrolling).
+local function InfoLine(page, rows, all, visible)
     local last = math.min(#rows, page.offset + visible)
     page.info:SetText(string.format("%d-%d of %d kinds of item shown (%d known). Grey: none right now.",
         #rows == 0 and 0 or page.offset + 1, last, #rows, #all))
-    if previewing then
-        page.summary:SetText(string.format("Takes %d kinds of item, %d in your bags now (green rows).", matches, held))
-    elseif #selected == 0 then
-        page.summary:SetText("Select items in the table to fill in the lines below, or press Add a line to set them by hand.")
+end
+
+local function Summarize(page, rows, all, visible, selected)
+    InfoLine(page, rows, all, visible)
+    if #selected == 0 then
+        page.summary:SetText("Click items to select them (Ctrl-click for more) to make a sack that takes items like them. Right-click an item to open its sack.")
     else
-        page.summary:SetText("Add a line below to say what the sack takes.")
+        local rule = RuleFromSelection(selected)
+        page.summary:SetText(string.format("%d selected. A new sack would take: %s", #selected,
+            #rule > 0 and Describe(rule) or "(nothing they share fits a line. Select ten or fewer to list them one by one.)"))
     end
+end
+
+-- Fills a table (this page's or a sack page's) with the rows that pass its filter, `visible` of them at a time.
+local function ShowTable(page, all, visible, rows)
+    LayoutColumns(page)
+    rows = rows or FilteredRows(all, page)
+    page.lastRows, page.lastVisible = rows, visible
+    page.offset = math.min(page.offset or 0, math.max(0, #rows - visible))
+    page.scroll.set(#rows, visible, page.offset, visible * TABLE_ROW_HEIGHT)
+    FillTable(page, rows, visible)
+    MarkSortedHeader(page)
+    return rows
 end
 
 local function RefreshItems()
     local page = ns.settings.items
-    LayoutColumns(page)
-    DropMissingTarget(page)
-    page.sackPick.select(page.target or NEW_SACK)
-    page.createButton:SetText(page.target and "Save changes" or "Make sack")
     local all = BuildItemRows()
     local selected = SelectedRows(all)
-    local rule = DraftRule(page)
-    local previewing = #rule > 0
-    local matches, held = MarkMatches(all, rule, previewing)
-
-    if not page.target then
-        local suggestion = previewing and UniqueName(SuggestName(rule, selected[1] and selected[1].name)) or ""
-        local typed = page.nameEdit:GetText() or ""
-        if typed == "" or typed == page.suggested then page.nameEdit:SetText(suggestion) end
-        page.suggested = suggestion
-    end
-    local rows = FilteredRows(all, page)
     -- The table is as tall as its rows need, up to what the screen leaves after the lines and buttons below it.
-    local below = INFO_HEIGHT + SUMMARY_HEIGHT + DROPDOWN_HEIGHT + #page.draft * LINE_HEIGHT + BUTTON_HEIGHT + PADDING + page.hintHeight + BUTTON_HEIGHT
-    local visible = math.max(math.min(#rows, ListRoom(page.tableTop, below, TABLE_ROW_HEIGHT, 8, 16)), 8)
-    local most = math.max(0, #rows - visible)
-    page.offset = math.min(page.offset or 0, most)
-    page.scroll.set(#rows, visible, page.offset, visible * TABLE_ROW_HEIGHT)
+    local below = INFO_HEIGHT + SUMMARY_HEIGHT + BUTTON_HEIGHT
+    local filtered = FilteredRows(all, page)
+    local visible = math.max(math.min(#filtered, ListRoom(page.tableTop, below, TABLE_ROW_HEIGHT, 8, #page.view)), 8)
+    local rows = ShowTable(page, all, visible, filtered)
     PlaceBelowTable(page, visible)
-    FillTable(page, rows, visible)
-    MarkSortedHeader(page)
-    Summarize(page, rows, all, visible, previewing, matches, held, selected)
-    ns.settings:SetHeight(CONTENT_TOP + page.height + MARGIN)
+    Summarize(page, rows, all, visible, selected)
+    if #selected > 0 then page.fromSelection:Enable() else page.fromSelection:Disable() end
+    ns.FitWindow(page.height)
 end
 
-local FILTER_HEIGHT = DROPDOWN_HEIGHT + PADDING -- the Show and Search row above the table
+local FILTER_HEIGHT = BUTTON_HEIGHT + PADDING -- the Show and Search row above the table
 
--- The row above the table: Show, Search, and the button that makes a sack from the search.
-local function BuildFilterRow(page)
-    local labelY = -((DROPDOWN_HEIGHT - LABEL_HEIGHT) / 2)
-    local showX = math.ceil(TextWidth("Show", "GameFontHighlight")) + PADDING
-    MakeText(page, "GameFontHighlight", "TOPLEFT", 0, labelY):SetText("Show")
+-- The row above the table, starting at x0: Show, Search, and (on this page) the button that makes a sack from the
+-- search. A sack's page shows "What its lines fit" instead of "Unsorted".
+local function BuildFilterRow(page, x0, onSackPage)
+    x0 = x0 or 0
+    local labelY = -TEXT_DROP
+    local showX = x0 + math.ceil(TextWidth("Show", "GameFontHighlight")) + PADDING
+    MakeText(page, "GameFontHighlight", "TOPLEFT", x0, labelY):SetText("Show")
     page.show = MakeChoice(page, nil, showX, 0, function()
-        return {
+        local options = {
             { label = "In my bags now", value = "bags" },
             { label = "Everything I've carried", value = "all" },
-            { label = "Unsorted (in " .. SacksDB.fallback.name .. ")", value = "unsorted" },
         }
+        if onSackPage then
+            options[#options + 1] = { label = "What its lines fit", value = "fits" }
+        else
+            options[#options + 1] = { label = "Unsorted (in " .. SacksDB.fallback.name .. ")", value = "unsorted" }
+        end
+        return options
     end, function()
         page.offset = 0
         ns.RefreshSettings()
     end)
     -- the Show box is as wide as its longest choice; Search, its box and the button follow it left to right
-    local searchLabelX = showX + page.show.fit() + 2 * DROPDOWN_INSET
+    page.show.fit()
+    local searchLabelX = showX + page.show.seen() + 3 * PADDING -- pairs of words and box are further apart than a word and its box
     MakeText(page, "GameFontHighlight", "TOPLEFT", searchLabelX, labelY):SetText("Search")
     local searchX = searchLabelX + math.ceil(TextWidth("Search", "GameFontHighlight")) + PADDING
     page.search = MakeTextBox(page, NAME_WIDTH, function(_, user)
@@ -1054,15 +1086,15 @@ local function BuildFilterRow(page)
             ns.RefreshSettings()
         end
     end)
-    page.search:SetPoint("TOPLEFT", searchX, -((DROPDOWN_HEIGHT - BUTTON_HEIGHT) / 2))
+    page.search:SetPoint("TOPLEFT", searchX + ns.TEXTBOX_ART_LEFT, 0)
+    if onSackPage then return end
+    -- a new sack that takes every item whose name fits the search, opened on the sack page
     page.searchSack = MakeButton(page, "Sack from search", nil, function()
         local text = page.search:GetText() or ""
         if text == "" then return Say("type something in the search box first") end
-        if #page.draft >= MAX_LINES then return Say("that is as many lines as a sack can have") end
-        page.draft[#page.draft + 1] = { field = "name", op = PatternError(text) and "contains" or "matches", value = text }
-        ns.RefreshSettings()
+        SackFromRule({ { field = "name", op = PatternError(text) and "contains" or "matches", value = text } })
     end)
-    page.searchSack:SetPoint("TOPLEFT", searchX + NAME_WIDTH + PADDING, -((DROPDOWN_HEIGHT - BUTTON_HEIGHT) / 2))
+    page.searchSack:SetPoint("TOPLEFT", searchX + ns.TEXTBOX_ART_LEFT + NAME_WIDTH + PADDING, 0)
 end
 
 -- The column headers; a click sorts by that column, a second click flips it.
@@ -1090,10 +1122,7 @@ local function MakeTableRow(page, top, index)
     local view = CreateFrame("Button", nil, page)
     view:SetSize(WINDOW_WIDTH - MARGIN * 2, TABLE_ROW_HEIGHT)
     view:SetPoint("TOPLEFT", 0, -(top + (index - 1) * TABLE_ROW_HEIGHT))
-    view:RegisterForClicks("LeftButtonUp")
-    view.matched = view:CreateTexture(nil, "BACKGROUND")
-    view.matched:SetAllPoints()
-    view.matched:SetColorTexture(0.1, 0.8, 0.2, 0.18)
+    view:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     view.selected = view:CreateTexture(nil, "BACKGROUND")
     view.selected:SetAllPoints()
     view.selected:SetColorTexture(0.2, 0.45, 1, 0.4)
@@ -1101,6 +1130,14 @@ local function MakeTableRow(page, top, index)
     view.hover:SetAllPoints()
     view.hover:SetColorTexture(1, 1, 1, 0.08)
     view.hover:Hide()
+    view.inMark = view:CreateTexture(nil, "BACKGROUND")
+    view.inMark:SetAllPoints()
+    view.inMark:SetColorTexture(ns.MARK_IN[1], ns.MARK_IN[2], ns.MARK_IN[3], ns.MARK_IN[4])
+    view.inMark:Hide()
+    view.takenMark = view:CreateTexture(nil, "BACKGROUND")
+    view.takenMark:SetAllPoints()
+    view.takenMark:SetColorTexture(ns.MARK_TAKEN[1], ns.MARK_TAKEN[2], ns.MARK_TAKEN[3], ns.MARK_TAKEN[4])
+    view.takenMark:Hide()
     view.icon = view:CreateTexture(nil, "ARTWORK")
     view.icon:SetSize(TABLE_ROW_HEIGHT - 2, TABLE_ROW_HEIGHT - 2)
     view.icon:SetPoint("LEFT", 1, 0)
@@ -1117,9 +1154,16 @@ local function MakeTableRow(page, top, index)
         view.cells[column.key] = cell
         cellX = cellX + width
     end
-    view:SetScript("OnClick", function(self)
+    view:SetScript("OnClick", function(self, mouse)
         local row = self.data
         if not row then return end
+        if mouse == "RightButton" then
+            -- open the sack this item goes to
+            local group = FindGroup(row.sack)
+            if group then ns.EditSack(group) end
+            return
+        end
+        if page.onRowClick then return page.onRowClick(row) end
         if IsControlKeyDown and IsControlKeyDown() then
             state.selected[row.itemID] = not state.selected[row.itemID] or nil
         else
@@ -1127,7 +1171,7 @@ local function MakeTableRow(page, top, index)
             state.selected = {}
             if not only then state.selected[row.itemID] = true end
         end
-        SelectionChanged()
+        ns.RefreshSettings()
     end)
     view:SetScript("OnEnter", function(self)
         self.hover:Show()
@@ -1136,6 +1180,9 @@ local function MakeTableRow(page, top, index)
             if not pcall(GameTooltip.SetHyperlink, GameTooltip, "item:" .. self.data.itemID) then
                 GameTooltip:SetText(self.data.name)
             end
+            GameTooltip:AddLine(" ")
+            GameTooltip:AddLine(page.clickHint or "Click: select it (Ctrl-click: add to the selection)", 0.5, 0.8, 1)
+            GameTooltip:AddLine("Right-click: open " .. tostring(self.data.sack), 0.5, 0.8, 1)
             GameTooltip:Show()
         end
     end)
@@ -1147,80 +1194,40 @@ local function MakeTableRow(page, top, index)
 end
 
 -- The table of items, its mouse wheel and its scrollbar.
-local function BuildTable(page, top)
-    for index = 1, 40 do
+local function BuildTable(page, top, most)
+    for index = 1, most or 40 do
         page.view[index] = MakeTableRow(page, top, index)
     end
 
+    -- Scrolling only refills the rows in view, from the rows the last refresh worked out.
+    local function scrollTo(offset)
+        local rows, visible = page.lastRows, page.lastVisible
+        if not rows then
+            page.offset = offset
+            return ns.RefreshSettings()
+        end
+        page.offset = math.max(0, math.min(offset, #rows - visible))
+        page.scroll.set(#rows, visible, page.offset, visible * TABLE_ROW_HEIGHT)
+        FillTable(page, rows, visible)
+        if page.afterScroll then page.afterScroll() end
+    end
     page:EnableMouseWheel(true)
-    page:SetScript("OnMouseWheel", function(self, delta)
-        self.offset = math.max(0, (self.offset or 0) - delta * WHEEL_STEP)
-        ns.RefreshSettings()
-    end)
+    page:SetScript("OnMouseWheel", function(self, delta) scrollTo((self.offset or 0) - delta * WHEEL_STEP) end)
 
     page.tableTop = top
-    page.scroll = MakeScrollbar(page, WINDOW_WIDTH - MARGIN * 2 + SLOT_GAP, top, function(offset)
-        page.offset = offset
-        ns.RefreshSettings()
-    end)
+    page.scroll = MakeScrollbar(page, WINDOW_WIDTH - MARGIN * 2 + SLOT_GAP, top, scrollTo)
 end
 
--- The pieces under the table: the sack you pick to change, and the lines that say what it takes.
-local function BuildSackChoice(page, y)
-    page.sackLabel = MakeText(page, "GameFontHighlight", "TOPLEFT", 0, -(y + (DROPDOWN_HEIGHT - 12) / 2))
-    page.sackLabel:SetText("Sack")
-    page.sackPick = MakeChoice(page, nil, SACK_X, -y, SackPickOptions, function()
-        local value = page.sackPick.value()
-        LoadSack(page, value ~= NEW_SACK and value or nil)
-        ns.RefreshSettings()
-    end, CHOICE_WIDTH + 30)
-    page.sackHint = MakeText(page, "GameFontDisableSmall", "TOPLEFT", 56 + CHOICE_WIDTH + 30 + 40, -(y + (DROPDOWN_HEIGHT - 10) / 2))
-    page.sackHint:SetText("pick an existing sack to change what it takes")
-    y = y + DROPDOWN_HEIGHT
-    return y
-end
-
-local function BuildRuleLines(page, y)
-    -- The lines that say what the sack takes. RefreshItems places them, and everything below them, as they come and go.
-    page.lineTop = y
-    page.addButton = MakeButton(page, "Add a line", nil, function()
-        if #page.draft >= MAX_LINES then return Say("that is as many lines as a sack can have") end
-        page.draft[#page.draft + 1] = NewCondition("name") -- empty: says nothing until you fill it in
-        ns.RefreshSettings()
-    end)
-    -- the words you pick sit on a lighter patch, like code in a chat
-    page.hint = ns.MakeNote(page, {
-        "#How lines combine",
-        "`A or B and C` means `A or (B and C)`, because `and` is stronger than `or`.",
-        "Hover a text box to see what you can type in it.",
-    }, WINDOW_WIDTH - MARGIN * 2)
-    page.hint:SetPoint("TOPLEFT", 0, -y)
-    page.hintHeight = page.hint.height
-end
-
--- Saves the draft as a new sack, or as changes to the sack being edited.
-local function MakeOrSaveSack(page)
-    local rule = DraftRule(page)
-    local target = page.target
-    if target then
-        local name = (page.nameEdit:GetText() or ""):match("^%s*(.-)%s*$")
-        if name == "" then return Say("a sack needs a name") end
-        local other = FindGroup(name)
-        if other and other ~= target then return Say("there is already a sack called " .. name) end
-        if #rule == 0 then return Say("add at least one line for the sack to take") end
-        local oldName = target.name
-        target.rule, target.name = rule, name
-        for _, group in ipairs(AllGroups()) do
-            if group.dock and group.dock.to == oldName then group.dock.to = name end
-        end
-        Say("saved " .. name .. ": " .. Describe(rule))
-        Refresh()
-        return
-    end
-    if AddSack(page.nameEdit:GetText(), rule) then
-        page.nameEdit:SetText("")
-        page.suggested = nil
-    end
+-- The item table on a sack's page: the same table, its Show and Search row starting at x0. The page sets markOf, fits,
+-- onRowClick and draft on it.
+local function BuildItemTable(parent, x0, most)
+    local page = CreateFrame("Frame", nil, parent)
+    page:SetSize(WINDOW_WIDTH - MARGIN * 2, 100)
+    page.offset, page.headers, page.view = 0, {}, {}
+    BuildFilterRow(page, x0, true)
+    BuildHeaders(page)
+    BuildTable(page, FILTER_HEIGHT + ns.ORDER_ROW_HEIGHT, most)
+    return page
 end
 
 -- Drops what the game was told about items you no longer carry (pinned ones stay).
@@ -1237,58 +1244,58 @@ local function ForgetUnseenItems()
         if not keep[id] then doomed[#doomed + 1] = id end
     end
     for _, id in ipairs(doomed) do SacksDB.seen[id] = nil end
+    rowsCache = nil
     Say(string.format("forgot %d kinds of item you no longer carry (pinned ones are kept)", #doomed))
     ns.RefreshSettings()
 end
 
-local function BuildSackButtons(page, y)
-    page.nameEdit = MakeTextBox(page, NAME_WIDTH)
-    page.nameEdit:SetPoint("TOPLEFT", 6, -y)
-    page.nameEdit:SetMaxLetters(32)
-    page.createButton = MakeButton(page, "Make sack", nil, function() MakeOrSaveSack(page) end)
-    page.createButton:SetPoint("LEFT", page.nameEdit, "RIGHT", PADDING, 0)
-    page.forget = MakeButton(page, "Forget items I don't have", nil, ForgetUnseenItems)
-    page.forget:SetPoint("LEFT", page.createButton, "RIGHT", 3 * MARGIN, 0)
-    y = y + BUTTON_HEIGHT
-    return y
-end
-
 local function BuildItems(window)
     local page = CreateFrame("Frame", nil, window)
-    page:SetPoint("TOPLEFT", MARGIN, -CONTENT_TOP)
     page:SetSize(WINDOW_WIDTH - MARGIN * 2, 100)
     page.offset, page.headers, page.view = 0, {}, {}
-    page.target, page.draft, page.lines = false, {}, {}
 
     BuildFilterRow(page)
     BuildHeaders(page)
-    local top = FILTER_HEIGHT + ns.ORDER_ROW_HEIGHT
-    BuildTable(page, top)
-    local y = top + 12 * TABLE_ROW_HEIGHT + PADDING
-    page.info = MakeText(page, "GameFontDisableSmall", "TOPLEFT", 0, -y)
-    y = y + 16
-    page.summary = MakeText(page, "GameFontNormal", "TOPLEFT", 0, -y)
+    BuildTable(page, FILTER_HEIGHT + ns.ORDER_ROW_HEIGHT)
+    page.info = MakeText(page, "GameFontDisableSmall", "TOPLEFT", 0, 0)
+    page.summary = MakeText(page, "GameFontNormal", "TOPLEFT", 0, 0)
     page.summary:SetWidth(WINDOW_WIDTH - MARGIN * 2)
-    y = y + 34
-
-    y = BuildSackChoice(page, y)
-    BuildRuleLines(page, y)
-    y = BuildSackButtons(page, y)
-
-    page.height = y
-    page:SetHeight(y)
+    page.fromSelection = MakeButton(page, "New sack from selection", nil, function()
+        local selected = SelectedRows(BuildItemRows())
+        if #selected == 0 then return Say("select items in the table first") end
+        local rule = RuleFromSelection(selected)
+        if #rule == 0 then return Say("those items share nothing a line can say. Select ten or fewer to list them one by one.") end
+        SackFromRule(rule, selected[1].name)
+    end)
+    page.forget = MakeButton(page, "Forget items I don't have", nil, ForgetUnseenItems)
+    page.afterScroll = function() InfoLine(page, page.lastRows, BuildItemRows(), page.lastVisible) end
+    page.height = 100
     return page
 end
 
 -- shared with the files after this one
 ns.BuildItemRows = BuildItemRows
+ns.BuildItemTable = BuildItemTable
+ns.ShowTable = ShowTable
+ns.FilteredRows = FilteredRows
+ns.ItemName = ItemName
+ns.TABLE_TOP = FILTER_HEIGHT + ns.ORDER_ROW_HEIGHT
+-- How wide the and/or box at the start of a line looks: sort steps line their own columns up with it.
+ns.GateSeen = function()
+    local widest = 0
+    for _, option in ipairs(GATE_OPTIONS) do widest = math.max(widest, TextWidth(option.label)) end
+    return math.ceil(widest) + 2 * DROPDOWN_INSET + ns.DROPDOWN_RIGHT
+end
 ns.BuildItems = BuildItems
+ns.CopyCondition = CopyCondition
+ns.DraftRule = DraftRule
 ns.FillLine = FillLine
 ns.ListRoom = ListRoom
-ns.LoadSack = LoadSack
 ns.MAX_LINES = MAX_LINES
 ns.MakeLine = MakeLine
 ns.NewCondition = NewCondition
 ns.MakeScrollbar = MakeScrollbar
 ns.RefreshItems = RefreshItems
+ns.RuleTakes = RuleTakes
+ns.UniqueName = UniqueName
 ns.sort = sort

@@ -153,15 +153,15 @@ local MAX_SACKS, MAX_LINES_PER_RULE, MAX_PINS = 100, 50, 500
 local POINTS = { TOPLEFT = true, TOP = true, TOPRIGHT = true, LEFT = true, CENTER = true, RIGHT = true,
     BOTTOMLEFT = true, BOTTOM = true, BOTTOMRIGHT = true }
 local CORNERS = { TOPLEFT = true, TOPRIGHT = true, BOTTOMLEFT = true, BOTTOMRIGHT = true }
-local FLOWS = { ROWS = true, COLUMNS = true }
+local FLOWS = { ROWS = true, COLUMNS = true, PAGE = true }
 local TITLES = { TOP = true, BOTTOM = true, NONE = true }
 local SIDES = { TOP = true, BOTTOM = true, LEFT = true, RIGHT = true }
 
 -- The settings that are kept: the sacks, Other, the free-slots box, and the global choices. Not what you have carried,
 -- not the error log, not where the minimap icon sits.
 local function Payload()
-    return { groups = SacksDB.groups, fallback = SacksDB.fallback, widget = ns.WidgetGroup(), columns = SacksDB.columns,
-        clickColor = SacksDB.clickColor, hideBags = SacksDB.hideBags }
+    return { groups = SacksDB.groups, fallback = SacksDB.fallback, widget = ns.WidgetGroup(), money = ns.MoneyGroup(), columns = SacksDB.columns,
+        clickColor = SacksDB.clickColor, hideBags = SacksDB.hideBags, defaults = SacksDB.defaults }
 end
 
 local function DeepCopy(value)
@@ -261,6 +261,16 @@ local function CleanGroup(source, what)
         end
         clean.dock = { to = dock.to, side = dock.side, edge = dock.edge, offset = dock.offset }
     end
+    -- the other sacks it was dropped touching (see Placement.lua)
+    if type(source.touches) == "table" then
+        local touches = {}
+        for _, touch in ipairs(source.touches) do
+            if type(touch) == "table" and type(touch.to) == "string" and SIDES[touch.side] then
+                touches[#touches + 1] = { to = touch.to, side = touch.side }
+            end
+        end
+        if #touches > 0 then clean.touches = touches end
+    end
     return clean
 end
 
@@ -291,6 +301,14 @@ local function Validate(data)
     if data.widget ~= nil then
         clean.widget, problem = CleanGroup(data.widget, "the free-slots box")
         if not clean.widget then return nil, problem end
+    end
+    if data.money ~= nil then
+        clean.money, problem = CleanGroup(data.money, "the gold box")
+        if not clean.money then return nil, problem end
+    end
+    if data.defaults ~= nil then
+        clean.defaults, problem = CleanGroup(data.defaults, "the defaults")
+        if not clean.defaults then return nil, problem end
     end
     if data.columns ~= nil then
         if type(data.columns) ~= "number" or data.columns < 1 or data.columns > 50 or data.columns ~= math.floor(data.columns) then
@@ -341,7 +359,9 @@ local function Install(data)
     ns.EnsureFallback()
     ns.UpgradeSort(SacksDB.fallback)
     if data.widget then refill(ns.WidgetGroup(), data.widget) end
+    if data.money then refill(ns.MoneyGroup(), data.money) end
     SacksDB.columns, SacksDB.clickColor = data.columns, data.clickColor
+    SacksDB.defaults = data.defaults -- DefaultsGroup() fills in what the page needs
     if data.hideBags ~= nil then SacksDB.hideBags = data.hideBags end
     ns.HideOwnBags()
     ns.Refresh()

@@ -47,7 +47,16 @@ ns.OnEvent("ADDON_ACTION_BLOCKED", RecordBlocked)
 ns.OnEvent("ADDON_ACTION_FORBIDDEN", RecordBlocked)
 
 ns.OnEvent("PLAYER_LOGIN", function()
+    local existing = SacksDB ~= nil and SacksDB.groups ~= nil
     SacksDB = SacksDB or {}
+    -- Like a page became the built-in fill. Sacks saved before that, following the built-in fill, keep filling across.
+    if not SacksDB.pageFill then
+        if existing then
+            local defaults = ns.DefaultsGroup()
+            if defaults.flow == nil then defaults.flow = "ROWS" end
+        end
+        SacksDB.pageFill = true
+    end
     -- saved data of features that no longer exist
     SacksDB.fresh, SacksDB.snapshot, SacksDB.snapshot2, SacksDB.tray, SacksDB.trayAlways = nil, nil, nil, nil, nil
     SacksDB.groups = SacksDB.groups or DefaultGroups()
@@ -67,7 +76,12 @@ ns.OnEvent("PLAYER_LOGIN", function()
 end)
 
 ns.OnEvent("BAG_UPDATE_DELAYED", Refresh)
+ns.OnEvent("PLAYER_MONEY", function() ns.UpdateMoney() end)
 ns.OnEvent("BAG_UPDATE_COOLDOWN", function() ns.UpdateCooldowns() end)
+-- After a reload the game only knows the items' cooldowns a little after the sacks are built, and says nothing about
+-- bag items then: the cooldowns are read again when the world is entered and when the game's cooldowns update.
+ns.OnEvent("PLAYER_ENTERING_WORLD", function() ns.UpdateCooldowns() end)
+ns.OnEvent("SPELL_UPDATE_COOLDOWN", function() ns.UpdateCooldowns() end)
 -- An item waiting for a target (a crate to fill) starts or stops: dim or restore the slots that cannot take it.
 ns.OnEvent("CURRENT_SPELL_CAST_CHANGED", function() ns.UpdateTargetDim() end)
 

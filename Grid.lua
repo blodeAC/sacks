@@ -9,7 +9,8 @@ local function BlankMode(group)
     return group.blank or "LAST"
 end
 
--- Which cell of the grid an item goes in: filling across then wrapping, or down then wrapping.
+-- Which cell of the grid an item goes in: filling across then wrapping, or down then wrapping. A page ("PAGE") fills
+-- across like rows; it differs only in where the first cell is (see SackGeometry).
 local function GridCell(index, layout)
     if layout.flow == "COLUMNS" then
         return math.floor((index - 1) / layout.wrap), (index - 1) % layout.wrap
@@ -49,8 +50,9 @@ end
 -- order you normally read them in (left to right, top to bottom), so a sack that grows up or left looks the
 -- same, just packed to the top left. This numbers them: reading[cell] is the place the cell takes on the page.
 local function ReadingOrder(layout, columns, rows, cells)
-    local fromRightNow = layout.anchor == "TOPRIGHT" or layout.anchor == "BOTTOMRIGHT"
-    local fromBottomNow = layout.anchor == "BOTTOMLEFT" or layout.anchor == "BOTTOMRIGHT"
+    local page = layout.flow == "PAGE" -- already reads from the top left
+    local fromRightNow = not page and (layout.anchor == "TOPRIGHT" or layout.anchor == "BOTTOMRIGHT")
+    local fromBottomNow = not page and (layout.anchor == "BOTTOMLEFT" or layout.anchor == "BOTTOMRIGHT")
     local list = {}
     for index = 1, cells do
         local column, row = GridCell(index, layout)

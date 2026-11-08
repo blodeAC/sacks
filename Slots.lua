@@ -111,9 +111,26 @@ local function ModifiedClick(button)
     return false
 end
 
+-- Whether a window you would move items into is open, and whether a right click moves the item into it there (as the
+-- game's own bags do: sell, put in the bank, attach to a letter, put in the trade). While one is open, a click never
+-- uses or equips the item; where a right click would not move it (the mailbox's inbox, the auction house) it does nothing.
+local function shown(name)
+    local frame = _G[name]
+    return frame and frame.IsShown and frame:IsShown() or false
+end
+local function MovingWindow()
+    if shown("MerchantFrame") or shown("BankFrame") or shown("GuildBankFrame") or shown("TradeFrame") or shown("SendMailFrame") then
+        return true, true
+    end
+    if shown("MailFrame") or shown("AuctionFrame") or shown("AuctionHouseFrame") then return true, false end
+    return false, false
+end
+ns.MovingWindow = MovingWindow
+
 local function SetUpSlotClicks(button)
-    -- Right click uses the item (and sells it at a vendor). Left click and dragging pick it up, like the game's bags,
-    -- unless the sack is set to use items on left click (then only dragging picks up).
+    -- Right click uses the item; with a vendor, bank, mailbox, trade or auction window open it moves the item there
+    -- instead, or does nothing (see MovingWindow). Left click and dragging pick it up, like the game's bags, unless the
+    -- sack is set to use items on left click (then only dragging picks up).
     button:RegisterForClicks("AnyDown", "AnyUp")
     button:RegisterForDrag("LeftButton")
     button:SetAttribute("type2", "item")
@@ -121,10 +138,11 @@ local function SetUpSlotClicks(button)
     -- it. Fire on release instead, so holding and moving picks the item up and a plain click uses it.
     button:SetAttribute("useOnKeyDown", false)
     button:SetScript("PreClick", function(self, mouse, down)
-        local atVendor = MerchantFrame and MerchantFrame:IsShown()
-        if state.debugClicks then ns.LogClick(self, mouse, down, atVendor) end
-        if mouse == "LeftButton" and self.clickUse and atVendor and not (InCombatLockdown and InCombatLockdown()) then
-            -- A sack set to use items on left click behaves like the game's bags at a vendor: no use, only pick up.
+        local windowOpen, moves = MovingWindow()
+        if state.debugClicks then ns.LogClick(self, mouse, down, windowOpen) end
+        if mouse == "LeftButton" and self.clickUse and windowOpen and not (InCombatLockdown and InCombatLockdown()) then
+            -- A sack set to use items on left click behaves like the game's bags with such a window open: no use, only
+            -- pick up.
             self:SetAttribute("type1", nil)
             self.leftOff = true
         end
@@ -150,14 +168,14 @@ local function SetUpSlotClicks(button)
         if mouse == "LeftButton" and not down and self.bag and (not self.clickUse or self.leftOff) then
             Container.PickupContainerItem(self.bag, self.slot)
         end
-        -- The secure "use item" action equips bags and gear at a vendor instead of selling them. At a vendor the game's
-        -- own bags call UseContainerItem, which sells, so do that: the secure action is switched off for this click
-        -- and the sale is made once, when the button comes back up.
-        if mouse == "RightButton" and self.bag and MerchantFrame and MerchantFrame:IsShown()
-            and not (InCombatLockdown and InCombatLockdown()) then
+        -- The secure "use item" action would equip a bag or a piece of gear even with a vendor, bank or mailbox open. The
+        -- game's own bags call UseContainerItem there, which sells, banks, attaches or trades it, so do that: the secure
+        -- action is switched off for this click and the move is made once, when the button comes back up. Where a right
+        -- click moves nothing (the inbox, the auction house) the click does nothing at all.
+        if mouse == "RightButton" and self.bag and windowOpen and not (InCombatLockdown and InCombatLockdown()) then
             self:SetAttribute("type2", nil)
             self.selling = true
-            if not down then
+            if not down and moves then
                 local use = (C_Container and C_Container.UseContainerItem) or UseContainerItem
                 if use then use(self.bag, self.slot) end
             end

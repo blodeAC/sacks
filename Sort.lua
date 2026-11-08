@@ -54,7 +54,7 @@ local function FixRule(rule)
     for _, clause in ipairs(rule or {}) do
         if (clause.field == "sub" or clause.field == "class") and ORDERED[clause.op] then
             clause.op = "="
-            ns.Say("a " .. clause.field .. " line used < or > (meaningless for ids); it now reads 'is'")
+            ns.Say("a " .. clause.field .. " line used < or > (meaningless for ids). It now reads 'is'.")
         end
     end
 end
@@ -62,6 +62,13 @@ end
 local function UpgradeSort(group)
     FixRule(group.rule)
     for _, spec in ipairs(group.sort or {}) do FixRule(spec.rule) end
+    -- Reverse is gone. What it was for, the first items at the top left of a sack pinned at a bottom corner, is what
+    -- "Like a page" does, and that keeps pins first.
+    if group.reverse then
+        local anchor = group.anchor or ns.DEFAULT_ANCHOR
+        if (anchor == "BOTTOMLEFT" or anchor == "BOTTOMRIGHT") and group.flow ~= "COLUMNS" then group.flow = "PAGE" end
+    end
+    group.reverse = nil
     if not group.sort then return end
     local list = {}
     for _, spec in ipairs(group.sort) do
@@ -80,7 +87,7 @@ end
 local function SortItems(group, items)
     local rank = {}
     for index, id in ipairs(group.pins or {}) do rank[id] = index end
-    local keys = group.sort or DEFAULT_SORT
+    local keys = group.sort or ns.Default("sort", DEFAULT_SORT)
     -- Whatever the steps leave tied, stacks of the same item stay together (at the place of the first one in your bags),
     -- and only then does bag position decide, so the order is steady and identical stacks are never split up by chance.
     local first = {}
