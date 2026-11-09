@@ -363,7 +363,7 @@ local function DefaultGroups()
     local function add(name, rule, x, y)
         groups[#groups + 1] = { name = name, rule = rule, point = "CENTER", x = x, y = y }
     end
-    add("Combat loot", {}, SACK_COLUMN_X, 300)
+    add("New", {}, SACK_COLUMN_X, 300)
     groups[1].builtin = true
     add("Quest", { { field = "class", op = "=", value = Enum.ItemClass.Questitem } }, SACK_COLUMN_X, 200)
     add("Junk", { { field = "quality", op = "<=", value = Enum.ItemQuality.Poor } }, SACK_COLUMN_X, 100)
@@ -401,11 +401,11 @@ local function EnsureFallback()
     SacksDB.fallback.fixed = true
 end
 
--- The "Combat loot" sack is built in, like Other: it always exists and is first in the list. It has no rule: the sacks
--- cannot get new slots during combat, so it is where an item you loot in combat is shown until combat ends (then the
--- sacks are rebuilt and the item goes to its own sack). It is laid out like any sack and hidden outside combat unless
--- "always show" is on. Older saves had it as "New items" or not at all: that one is adopted, or one is made.
-local COMBAT_NAME = "Combat loot"
+-- The "New" sack is built in, like Other: it always exists and is first in the list. It has no rule: while the sacks
+-- cannot be rebuilt (in combat, or while the mouse is on them and they hold still) it is where a new item is shown, until
+-- they can (then the item goes to its own sack). It is laid out like any sack and hidden while empty unless "always show"
+-- is on. Older saves called it "New items" or "Combat loot", or had none: that one is adopted, or one is made.
+local COMBAT_NAME = "New"
 local function EnsureCombatSack()
     local found
     for _, group in ipairs(SacksDB.groups) do
@@ -413,7 +413,7 @@ local function EnsureCombatSack()
     end
     if not found then
         for _, group in ipairs(SacksDB.groups) do
-            if not found and (group.name == "New items" or group.name == COMBAT_NAME) then found = group end
+            if not found and (group.name == "New items" or group.name == "Combat loot" or group.name == COMBAT_NAME) then found = group end
         end
     end
     if found then

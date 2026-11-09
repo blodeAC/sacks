@@ -183,7 +183,7 @@ end
 
 function BeginSackDrag(frame)
     -- The game does not let a frame be moved in combat while item buttons are attached to it, and raises its
-    -- "blocked from an action" popup if you try. A sack with no item buttons (Combat loot) can still be moved.
+    -- "blocked from an action" popup if you try. A sack with no item buttons (New) can still be moved.
     if InCombatLockdown and InCombatLockdown() and #(rawget(frame, "buttons") or {}) > 0 then
         frame.noDrag = true
         ns.Say("sacks with items in them can't be moved in combat (the game doesn't allow it)")
@@ -397,7 +397,7 @@ local function PlaceGroups()
         -- An empty sack stays on screen (title and an empty box) so you can still see and move it; only a sack with
         -- nothing at all to show (no items, no empty slot, no title) goes away.
         local hidden = BlankMode(group) == "NONE" and group.title == "NONE" and (state.counts[group] or 0) == 0
-        if group.builtin and not group.always then hidden = true end -- Combat loot: only in combat, unless asked to stay
+        if group.builtin and not group.always then hidden = true end -- New: only while it holds something, unless asked to stay
         if vendor then
             -- Beside the vendor (or bank) window, in sack-list order, filling downward to the window's height. A box that no
             -- longer fits below goes into free space beside the narrower boxes, or into a new column.

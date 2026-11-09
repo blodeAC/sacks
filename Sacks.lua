@@ -498,7 +498,7 @@ local function Refresh()
         Guarded("combat counts", RefreshCounts) -- but what each slot shows can be brought up to date now
         Guarded("combat items", function()
             local items = ReadBags()
-            MarkStale(items) -- what it cannot show yet is drawn in Combat loot
+            MarkStale(items) -- what it cannot show yet is drawn in New
             RefreshFresh()
         end)
         if ns.RefreshSettings then Guarded("settings", ns.RefreshSettings) end
@@ -575,6 +575,7 @@ local function BagsChanged()
     Guarded("held extras", function()
         local items, free, special = ReadBags()
         state.items = items
+        MarkStale(items) -- what arrived is drawn in New, without moving anything
         UpdateWidget(free, special)
         RefreshFresh()
     end)
@@ -594,7 +595,7 @@ local function CreateSack(name, rule)
     if FindGroup(name) then return nil, "there is already a sack called " .. name end
     -- a new sack grows from the default corner, if one is set on the Defaults page
     local group = { name = name, rule = rule or {}, point = "CENTER", x = 0, y = 0, anchor = ns.Default("anchor", nil) }
-    -- First in priority, but after Combat loot, which always stays first.
+    -- First in priority, but after New, which always stays first.
     local first = SacksDB.groups[1]
     table.insert(SacksDB.groups, (first and first.builtin) and 2 or 1, group)
     return group

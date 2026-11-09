@@ -1,6 +1,6 @@
 -- sacks: Nav.lua
 -- The list at the left of the settings window: All items and Settings, then every sack in priority order. Click a sack
--- to open it; drag it up or down to change which sack gets an item first. Combat loot stays first and Other last.
+-- to open it; drag it up or down to change which sack gets an item first. New stays first and Other last.
 local _, ns = ...
 local AllGroups, BUTTON_HEIGHT, CreateSack, Describe = ns.AllGroups, ns.BUTTON_HEIGHT, ns.CreateSack, ns.Describe
 local LABEL_HEIGHT, ListRoom, MakeButton, MakeScrollbar, MakeText = ns.LABEL_HEIGHT, ns.ListRoom, ns.MakeButton, ns.MakeScrollbar, ns.MakeText
@@ -81,7 +81,7 @@ end
 -- drawing a gold line where the sack would go.
 ---------------------------------------------------------------------------------------------------
 
--- Where in the list a sack may go: after Combat loot (always first) and before Other (always last, not in the list
+-- Where in the list a sack may go: after New (always first) and before Other (always last, not in the list
 -- of sacks you made). Returns the first and last place a sack can be put before.
 local function DropRange()
     local first = (SacksDB.groups[1] and SacksDB.groups[1].builtin) and 2 or 1

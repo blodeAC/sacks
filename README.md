@@ -27,7 +27,7 @@ or copy this folder to `World of Warcraft/_forever_/Interface/AddOns/sacks`.
 
 ## Settings window
 
-At the left is the list: **All items**, **Settings**, then your sacks in priority order (the first sack whose lines an item fits gets it). Drag a sack up or down to change its place; Combat loot stays first and Other last. A sack's number is how many slots it shows now. **+ New sack** makes one with no lines (it takes nothing until you give it some) and puts its name ready to type over.
+At the left is the list: **All items**, **Settings**, then your sacks in priority order (the first sack whose lines an item fits gets it). Drag a sack up or down to change its place; New stays first and Other last. A sack's number is how many slots it shows now. **+ New sack** makes one with no lines (it takes nothing until you give it some) and puts its name ready to type over.
 
 **A sack's page** - everything about that sack in one place:
 - its name (Enter or click away to rename), "Left-click uses its items", Move to the middle of the screen, Delete sack;
@@ -37,7 +37,7 @@ At the left is the list: **All items**, **Settings**, then your sacks in priorit
 
 Sacks whose items left-click uses have their name in the list in the marking colour, the same colour as the "Left-click uses its items" box on their page.
 
-**All items**, **Settings**, then your sacks in priority order (the first sack whose lines an item fits gets it). Drag a sack up or down to change its place; Combat loot stays first and Other last. A sack's number is how many slots it shows now. **+ New sack** makes one with no lines (it takes nothing until you give it some) and puts its name ready to type over.
+**All items**, **Settings**, then your sacks in priority order (the first sack whose lines an item fits gets it). Drag a sack up or down to change its place; New stays first and Other last. A sack's number is how many slots it shows now. **+ New sack** makes one with no lines (it takes nothing until you give it some) and puts its name ready to type over.
 
 **A sack's page** - everything about that sack in one place:
 - its name (Enter or click away to rename), Move to the middle of the screen, Delete sack, and the left-click box;
@@ -57,7 +57,7 @@ A sack's order is a list of up to 10 steps, one row each. A step is either a **r
 
 ## Holding still
 
-While the mouse is on a sack, the sacks hold still. Selling, banking or using items leaves their slots where they are, dimmed and inert, so the next item under your cursor stays put. New items wait. Counts still update. When the mouse leaves the sacks, everything catches up at once.
+While the mouse is on a sack, the sacks hold still. Selling, banking or using items leaves their slots where they are, dimmed and inert, so the next item under your cursor stays put. New items show in the New sack until then. Counts still update. When the mouse leaves the sacks, everything catches up at once.
 
 ## Rules
 

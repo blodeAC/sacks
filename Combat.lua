@@ -5,7 +5,8 @@ local GridDimensions, GridSize, Matches, PADDING = ns.GridDimensions, ns.GridSiz
 local PlaceInGrid, QuestMarker, ReadBags, TintByQuality = ns.PlaceInGrid, ns.QuestMarker, ns.ReadBags, ns.TintByQuality
 local state = ns.state
 
--- In combat a new item may have no slot to go in (the secure slots cannot be added or moved). It is drawn here as a plain,
+-- In combat, or while the sacks hold still under the mouse, a new item has no slot to go in (in combat the secure slots
+-- cannot be added or moved; while held, nothing may move). It is drawn here as a plain,
 -- non-secure icon in the next cell of its sack's grid, where its slot will be after combat. The cells go on in the
 -- direction the sack grows, so nothing already on screen has to move; the free-slots box (a plain frame) steps aside.
 local function MakeGhost(frame)
@@ -34,12 +35,16 @@ local function MakeGhost(frame)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetBagItem(self.bag, self.slot)
         GameTooltip:AddLine(" ")
-        GameTooltip:AddLine("Arrived during combat: it can be used once combat ends.", COLOR.GREY[1], COLOR.GREY[2], COLOR.GREY[3], true)
+        local why = (InCombatLockdown and InCombatLockdown()) and "Arrived during combat: it can be used once combat ends."
+            or "New: it goes to its sack, and can be used, once the mouse leaves the sacks."
+        GameTooltip:AddLine(why, COLOR.GREY[1], COLOR.GREY[2], COLOR.GREY[3], true)
         GameTooltip:Show()
     end)
     ghost:SetScript("OnLeave", function()
         GameTooltip:Hide()
+        ns.LetGo()
     end)
+    ghost:HookScript("OnEnter", function() ns.HoldStill() end)
     return ghost
 end
 
@@ -50,7 +55,7 @@ local function ShowGhosts(group, frame, pending)
     if not geom or geom.reading then return end -- docked at a vendor or bank: the title marker says it
     local size = geom.size
     if group.builtin then
-        -- Combat loot has no real slots, so unlike the other sacks it can be resized right now to fit what it holds.
+        -- New has no real slots, so unlike the other sacks it can be resized right now to fit what it holds.
         local columns, rows = GridDimensions(geom.layout, #pending)
         geom.width, geom.height = GridSize(columns, rows, size, geom.topSpace, geom.bottomSpace)
         frame:SetSize(geom.width, geom.height)

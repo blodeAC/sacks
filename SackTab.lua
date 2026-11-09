@@ -811,7 +811,7 @@ local function RefreshPreview(page, group)
     end
 end
 
--- Fill, Title, Slots per row (with the empty slot, or Always show for Combat loot) and Title text, beside the picture.
+-- Fill, Title, Slots per row (with the empty slot, or Always show for New) and Title text, beside the picture.
 local function BuildLooks(page, L)
     page.copyLayout = L.header("Looks", "Copy layout from:", CopyLayout, "layout", LOOK_FIELDS)
     local top = L.y
@@ -838,7 +838,7 @@ local function BuildLooks(page, L)
         Refresh()
     end)
     page.titlePick.place(controls, rowTop(2))
-    -- slots per row: - n + and Use default; then the empty slot (Other) or Always show it (Combat loot)
+    -- slots per row: - n + and Use default; then the empty slot (Other) or Always show it (New)
     label("Slots per row", 3)
     local function perRow() return LayoutOf(EditedGroup()).wrap end
     page.perRowMinus = MakeButton(page, "-", nil, function()
@@ -875,7 +875,7 @@ local function BuildLooks(page, L)
         Refresh()
     end)
     page.alwaysCheck:SetPoint("TOPLEFT", afterDefault - SLOT_GAP, -(rowTop(3) + (BUTTON_HEIGHT - CHECK_SIZE) / 2))
-    SetTip(page.alwaysCheck, "Always show it", "Combat loot is only on screen in combat. Tick this to see it now, to place it.")
+    SetTip(page.alwaysCheck, "Always show it", "New is only on screen while it holds something. Tick this to see it now, to place it.")
     -- title text: the box, the token picker and Default
     label("Title text", 4)
     page.titleEdit = MakeTextBox(page, nil, function(self, typed)
@@ -950,7 +950,7 @@ local function RefreshLooks(page, group)
     page.titlePick.select(layout.title)
     page.perRowCount:SetText(layout.wrap)
     if group.cols then page.useDefault:Enable() else page.useDefault:Disable() end
-    -- only Other has the empty slot; only Combat loot needs Always show
+    -- only Other has the empty slot; only New needs Always show
     page.blank.show(group.fixed and true or false)
     page.blank.select(group.blank or "LAST")
     if group.fixed then page.blankLabel:Show() else page.blankLabel:Hide() end
@@ -1140,7 +1140,7 @@ local function DeleteSack(group)
 end
 
 
--- Name, left-click, Move to the middle of the screen and Delete, on one row. Combat loot and Other keep their names,
+-- Name, left-click, Move to the middle of the screen and Delete, on one row. New and Other keep their names,
 -- so theirs is plain text with a word on what they take.
 local function BuildHead(page)
     local head = CreateFrame("Frame", nil, page)
@@ -1190,7 +1190,7 @@ local function RefreshHead(page, group)
         head.fixedName:SetText(group.name)
         head.fixedName:Show()
         head.about:SetText(group.isDefaults and "for every sack that has no setting of its own"
-            or group.builtin and "what you loot in combat, until it ends" or "everything the other sacks don't take")
+            or group.builtin and "what arrives in combat, or while the mouse is on the sacks, until they can sort it" or "everything the other sacks don't take")
         head.about:ClearAllPoints()
         head.about:SetPoint("LEFT", head.fixedName, "RIGHT", 2 * PADDING, 0)
         head.about:Show()
@@ -1208,7 +1208,7 @@ local function RefreshHead(page, group)
         head.delete:Show()
     end
     if group.isDefaults then head.middle:Hide() else head.middle:Show() end
-    -- nothing in Combat loot can be used, and the words about it sit where the box would be
+    -- nothing in New can be used, and the words about it sit where the box would be
     if group.builtin or group.isDefaults then
         head.use:Hide()
     else
@@ -1342,7 +1342,7 @@ local function BuildTakes(page)
     items.fits = function(row) return items.markOf(row) ~= nil end
     items.onRowClick = function(row) ToggleItemLine(page, row.itemID) end
     takes.table = items
-    -- Combat loot and Other have no lines; Takes is not shown for them.
+    -- New and Other have no lines; Takes is not shown for them.
 end
 
 -- The draft for this sack, loaded from its rule when another sack is opened or its rule changed elsewhere.
