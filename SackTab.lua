@@ -46,10 +46,10 @@ end
 local function SetTip(frame, title, ...)
     local lines = { ... }
     frame:SetScript("OnEnter", function(self)
-        GameTooltip:SetOwner(self, "ANCHOR_TOP")
+        GameTooltip:SetOwner(self, "ANCHOR_NONE")
         GameTooltip:SetText(title, 1, 0.82, 0)
         for _, line in ipairs(lines) do GameTooltip:AddLine(line, 1, 1, 1, true) end
-        GameTooltip:Show()
+        ns.ShowTipBeside(self) -- beside the window, not over the controls
     end)
     frame:SetScript("OnLeave", function() GameTooltip:Hide() end)
 end
@@ -104,10 +104,10 @@ local function MakeSegments(parent, options, onPick)
         button:SetScript("OnEnter", function(self)
             self.hover:Show()
             if option.tip then
-                GameTooltip:SetOwner(self, "ANCHOR_TOP")
+                GameTooltip:SetOwner(self, "ANCHOR_NONE")
                 GameTooltip:SetText(option.label, 1, 0.82, 0)
                 GameTooltip:AddLine(option.tip, 1, 1, 1, true)
-                GameTooltip:Show()
+                ns.ShowTipBeside(self)
             end
         end)
         button:SetScript("OnLeave", function(self)
@@ -179,7 +179,7 @@ end
 local function ShowCellTooltip(cell)
     local entry = cell.data
     if not entry then return end
-    GameTooltip:SetOwner(cell, "ANCHOR_RIGHT")
+    GameTooltip:SetOwner(cell, "ANCHOR_NONE")
     if not pcall(GameTooltip.SetHyperlink, GameTooltip, "item:" .. entry.id) then GameTooltip:SetText(entry.name) end
     GameTooltip:AddLine(" ")
     if entry.count == 0 then
@@ -189,7 +189,7 @@ local function ShowCellTooltip(cell)
     end
     if entry.elsewhere then GameTooltip:AddLine("Goes to " .. entry.elsewhere .. " now: a sack above this one takes it", 1, 0.6, 0, true) end
     GameTooltip:AddLine(entry.pinned and "Click: unpin. Drag onto another pinned item to move it there." or "Click: pin it to the front", 0.5, 0.8, 1, true)
-    GameTooltip:Show()
+    ns.ShowTipBeside(cell)
 end
 
 local function MakeOrderCell(page)
@@ -666,7 +666,7 @@ local function BuildPreview(page, top)
         end)
         quarter:SetScript("OnEnter", function(self)
             self.hover:Show()
-            GameTooltip:SetOwner(self, "ANCHOR_TOP")
+            GameTooltip:SetOwner(self, "ANCHOR_NONE")
             if EditedGroup().isDefaults then
                 GameTooltip:SetText("Pin new sacks to the " .. corner.words, 1, 0.82, 0)
                 GameTooltip:AddLine("Sacks you already have keep their corner.", 1, 1, 1, true)
@@ -674,7 +674,7 @@ local function BuildPreview(page, top)
                 GameTooltip:SetText("Pin it to the " .. corner.words, 1, 0.82, 0)
                 GameTooltip:AddLine("That corner stays put on screen. The sack grows away from it.", 1, 1, 1, true)
             end
-            GameTooltip:Show()
+            ns.ShowTipBeside(self)
         end)
         quarter:SetScript("OnLeave", function(self)
             self.hover:Hide()

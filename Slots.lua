@@ -114,9 +114,11 @@ end
 -- Whether a window you would move items into is open, and whether a right click moves the item into it there (as the
 -- game's own bags do: sell, put in the bank, attach to a letter, put in the trade). While one is open, a click never
 -- uses or equips the item; where a right click would not move it (the mailbox's inbox, the auction house) it does nothing.
+-- IsVisible, not IsShown: a part of a window (the mailbox's send tab) keeps saying it is shown after the window around it
+-- closes, which made every click act as if the mailbox were still open.
 local function shown(name)
     local frame = _G[name]
-    return frame and frame.IsShown and frame:IsShown() or false
+    return frame and frame.IsVisible and frame:IsVisible() or false
 end
 local function MovingWindow()
     if shown("MerchantFrame") or shown("BankFrame") or shown("GuildBankFrame") or shown("TradeFrame") or shown("SendMailFrame") then
@@ -138,6 +140,9 @@ local function SetUpSlotClicks(button)
     -- it. Fire on release instead, so holding and moving picks the item up and a plain click uses it.
     button:SetAttribute("useOnKeyDown", false)
     button:SetScript("PreClick", function(self, mouse, down)
+        -- A slot whose item left while the sacks are held still (see Sacks.lua) does nothing until they catch up: its bag
+        -- slot may hold something else by now.
+        if self.gone then return end
         local windowOpen, moves = MovingWindow()
         if state.debugClicks then ns.LogClick(self, mouse, down, windowOpen) end
         if mouse == "LeftButton" and self.clickUse and windowOpen and not (InCombatLockdown and InCombatLockdown()) then
@@ -197,9 +202,11 @@ local function SetUpSlotClicks(button)
         if split and self.bag then split(self.bag, self.slot, amount) end
     end
     button:SetScript("OnDragStart", function(self)
+        if self.gone then return end
         if self.bag and not (CursorHasItem and CursorHasItem()) then Container.PickupContainerItem(self.bag, self.slot) end
     end)
     button:SetScript("OnReceiveDrag", function(self)
+        if self.gone then return end
         if self.bag then Container.PickupContainerItem(self.bag, self.slot) end
     end)
 end
@@ -309,6 +316,9 @@ local function MakeSlotButton(parent)
     SetUpSlotClicks(button)
     AddSlotLayers(button)
     SetUpSlotTooltip(button)
+    -- the sacks hold still while the mouse is on them
+    button:HookScript("OnEnter", function() ns.HoldStill() end)
+    button:HookScript("OnLeave", function() ns.LetGo() end)
     return button
 end
 

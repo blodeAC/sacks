@@ -55,15 +55,21 @@ Sacks whose items left-click uses have their name in the list in the marking col
 
 A sack's order is a list of up to 10 steps, one row each. A step is either a **rule** ("Items where tooltip contains mana": the items that match come first) or a **sort field** (any field a rule can test, plus number carried and bag position, ascending or descending). A step only decides between two items when every step above it ties. Pinned items always come first. **+ And** adds another condition to a rule step. Drag a step by its dots to move it. For example, one rule step `tooltip contains mana` followed by one `tooltip contains heals` puts mana drinks first, then bandages, then everything else.
 
+## Holding still
+
+While the mouse is on a sack, the sacks hold still. Selling, banking or using items leaves their slots where they are, dimmed and inert, so the next item under your cursor stays put. New items wait. Counts still update. When the mouse leaves the sacks, everything catches up at once.
+
 ## Rules
 
 A rule is a list of lines. Each line is `field operator value`, joined with AND (or OR where a line says so; AND binds first). A sack with no lines takes nothing.
+
+Every text box (name, tooltip, exact item, and the search above the item table) takes Lua patterns, any case: `.*` any run of characters, `^` start, `$` end, `[abc]` one of, `%d` a digit, and `|` between alternatives. Text typed as is always finds itself word for word too, so a name with a `-` or `(` in it needs no escaping.
 
 | Field | Meaning |
 | --- | --- |
 | class, sub | item class and subclass |
 | quality | item quality (comparisons like "above Poor" work) |
-| name | name pattern |
+| name | text in the item's name |
 | tooltip | text in the item's tooltip, such as "mana" or "health" |
 | item | one exact item |
 | ilvl, level | item level, required level |

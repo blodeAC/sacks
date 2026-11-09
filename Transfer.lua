@@ -188,6 +188,9 @@ local function CleanRule(rule, what)
     for _, option in ipairs(ns.RuleFields()) do fields[option.value] = true end
     local clean = {}
     for index, line in ipairs(rule) do
+        -- text sent from before contains did patterns says "matches"; it means contains now
+        if type(line) == "table" and line.op == "matches" then line.op = "contains" end
+        if type(line) == "table" and line.op == "!matches" then line.op = "!contains" end
         if type(line) ~= "table" or not fields[line.field] or not ns.OP_TEXT[line.op] then
             return nil, what .. ": line " .. index .. " of the rule is not one this version knows"
         end

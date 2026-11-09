@@ -91,6 +91,12 @@ local function MakeGroupFrame(group)
         line:Hide()
         frame.edges[#frame.edges + 1] = line
     end
+    -- The whole sack takes the mouse, so moving off it always says so: that is when a held-still layout catches up.
+    frame.isSack = true
+    frame:EnableMouse(true)
+    frame:SetScript("OnEnter", function() ns.HoldStill() end)
+    frame:SetScript("OnLeave", function() ns.LetGo() end)
+    frame:SetScript("OnHide", function() ns.LetGo() end)
     frame.handle = CreateFrame("Frame", nil, frame)
     frame.handle:EnableMouse(true)
     frame.handle:RegisterForDrag("LeftButton")
@@ -120,7 +126,8 @@ local function MakeGroupFrame(group)
         GameTooltip:AddLine("Right-click: this sack's settings", 0.5, 0.8, 1)
         GameTooltip:Show()
     end)
-    frame.handle:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    frame.handle:SetScript("OnLeave", function() GameTooltip:Hide(); ns.LetGo() end)
+    frame.handle:HookScript("OnEnter", function() ns.HoldStill() end)
     frame.blank = CreateFrame("Frame", nil, frame)
     frame.blank:SetSize(SlotSize(), SlotSize())
     frame.blank.back = frame.blank:CreateTexture(nil, "BACKGROUND")
@@ -134,7 +141,8 @@ local function MakeGroupFrame(group)
     frame.blank:SetScript("OnMouseUp", DropIntoFreeSlot)
     frame.blank:SetScript("OnReceiveDrag", DropIntoFreeSlot)
     frame.blank:SetScript("OnEnter", ShowFreeTooltip)
-    frame.blank:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    frame.blank:SetScript("OnLeave", function() GameTooltip:Hide(); ns.LetGo() end)
+    frame.blank:HookScript("OnEnter", function() ns.HoldStill() end)
     frame.buttons = {}
     return frame
 end
@@ -451,13 +459,17 @@ local function RefreshCounts()
         for _, button in ipairs(rawget(frame, "buttons") or {}) do
             if button.bag and button:IsShown() then
                 local ok, info = pcall(C_Container.GetContainerItemInfo, button.bag, button.slot)
+                local free = not (InCombatLockdown and InCombatLockdown())
                 if ok and type(info) == "table" and info.itemID == button.itemID then
                     local stack = info.stackCount or 1
                     button.count:SetText(stack > 1 and stack or "")
                     button.icon:SetDesaturated(false)
+                    if free and not button:GetAttribute("item") then button:SetAttribute("item", button.bag .. " " .. button.slot) end
                     button.gone = false
                     button.dead:Hide()
                 else
+                    -- out of combat the slot also stops using what its bag slot holds now (in combat it can't be changed)
+                    if free and button:GetAttribute("item") then button:SetAttribute("item", nil) end
                     button.gone = true
                     button.dead:Show()
                     button.count:SetText("")
@@ -531,6 +543,44 @@ local function Refresh()
 end
 state.refresh = Refresh
 
+-- While the mouse is on a sack, the sacks hold still: selling, banking or using items leaves their slots where they are
+-- (dimmed, and inert) instead of closing the gap under your cursor, and new items wait. When the mouse leaves every
+-- sack, everything catches up at once. Only bag changes are held; anything you change in the settings applies at once.
+local function OverSacks()
+    for _, frame in pairs(state.frames or {}) do
+        if rawget(frame, "isSack") and frame:IsShown() and frame:IsMouseOver() then return true end
+    end
+    return false
+end
+
+local function HoldStill()
+    state.holding = true
+end
+
+local function LetGo()
+    if not state.holding or OverSacks() then return end
+    state.holding = false
+    if state.heldBack then
+        state.heldBack = false
+        Refresh()
+    end
+end
+
+-- What the bags changing does: the whole refresh, or while held still, only what each slot shows.
+local function BagsChanged()
+    if not state.holding or not SacksDB then return Refresh() end
+    state.heldBack = true
+    state.generation = (state.generation or 0) + 1
+    Guarded("held counts", RefreshCounts)
+    Guarded("held extras", function()
+        local items, free, special = ReadBags()
+        state.items = items
+        UpdateWidget(free, special)
+        RefreshFresh()
+    end)
+    if ns.RefreshSettings then Guarded("settings", ns.RefreshSettings) end
+end
+
 local function HideRemoved(group)
     if state.frames[group] then state.frames[group]:Hide() end
 end
@@ -563,6 +613,9 @@ ns.ResetPosition = ResetPosition
 ns.CreateSack = CreateSack
 ns.HideRemoved = HideRemoved
 ns.Refresh = Refresh
+ns.HoldStill = HoldStill
+ns.LetGo = LetGo
+ns.BagsChanged = BagsChanged
 ns.WidgetGroup = WidgetGroup
 ns.MoneyGroup = MoneyGroup
 ns.UpdateMoney = UpdateMoney

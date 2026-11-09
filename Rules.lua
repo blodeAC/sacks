@@ -48,20 +48,34 @@ local function PatternError(text)
     end
 end
 
-local function TextMatches(op, value, name)
+-- Whether `name` holds one of the alternatives in `value`. Every alternative is a Lua pattern (any case); text typed as is
+-- also counts when it appears word for word, so a name with a - or ( in it still finds itself.
+local function TextFound(value, name)
     name = (name or ""):lower()
-    local plain = op == "contains" or op == "!contains"
-    local found = false
     for _, alternative in ipairs(Alternatives(value)) do
-        if plain then
-            found = found or name:find(alternative:lower(), 1, true) ~= nil
-        else
-            local ok, position = pcall(string.find, name, LowerPattern(alternative))
-            found = found or (ok and position ~= nil)
-        end
+        if name:find(alternative:lower(), 1, true) then return true end
+        local ok, position = pcall(string.find, name, LowerPattern(alternative))
+        if ok and position then return true end
     end
+    return false
+end
+
+local function TextMatches(op, value, name)
+    local found = TextFound(value, name)
     if op:sub(1, 1) == "!" then return not found end
     return found
+end
+
+-- There used to be a separate "matches pattern"; contains does patterns now, so saved lines that used it become contains.
+local OLD_TEXT_OPS = { matches = "contains", ["!matches"] = "!contains" }
+local function UpgradeTextOps(group)
+    local function each(rule)
+        for _, clause in ipairs(rule or {}) do
+            if OLD_TEXT_OPS[clause.op] then clause.op = OLD_TEXT_OPS[clause.op] end
+        end
+    end
+    each(group.rule)
+    for _, step in ipairs(group.sort or {}) do each(step.rule) end
 end
 
 -- Item facts beyond class, subclass and quality that a sack line can test. The game gives these in its item info:
@@ -296,8 +310,7 @@ end
 local FIELD_TEXT = { class = "class", sub = "subclass", quality = "quality", name = "name", tooltip = "tooltip text", item = "item" }
 local OP_TEXT = {
     ["="] = "is", ["~="] = "is not", ["<"] = "is below", ["<="] = "is at most", [">"] = "is above",
-    [">="] = "is at least", contains = "contains", ["!contains"] = "doesn't contain", matches = "matches pattern",
-    ["!matches"] = "doesn't match",
+    [">="] = "is at least", contains = "contains", ["!contains"] = "doesn't contain",
 }
 
 local function ValueText(condition, rule)
@@ -438,5 +451,7 @@ ns.STATS = STATS
 ns.ScanNames = ScanNames
 ns.Stat = Stat
 ns.TextMatches = TextMatches
+ns.TextFound = TextFound
+ns.UpgradeTextOps = UpgradeTextOps
 ns.ToConditions = ToConditions
 ns.ValueText = ValueText

@@ -258,8 +258,8 @@ local FIELD_OPERATORS = {
     class = { "=", "~=" },
     sub = { "=", "~=" },
     quality = { "=", "~=", "<", "<=", ">", ">=" },
-    name = { "contains", "!contains", "matches", "!matches" },
-    tooltip = { "contains", "!contains", "matches", "!matches" },
+    name = { "contains", "!contains" },
+    tooltip = { "contains", "!contains" },
     item = { "=", "~=" },
     ilvl = { "=", "~=", "<", "<=", ">", ">=" }, level = { "=", "~=", "<", "<=", ">", ">=" },
     stack = { "=", "~=", "<", "<=", ">", ">=" }, price = { "=", "~=", "<", "<=", ">", ">=" },
@@ -403,6 +403,28 @@ end
 
 -- Six dots, `height` tall and ns.GRIP_WIDTH wide, that a row is dragged by. Returns the button that holds them.
 -- While the mouse is on `button` (an x), `area` is tinted red, so you can see what it would remove. Returns the tint.
+-- Shows GameTooltip (already filled, owned with ANCHOR_NONE) beside the settings window, level with `owner`, so it never
+-- covers the boxes it explains or the ones around them: at the window's right, or at its left when the screen has no room.
+local function ShowTipBeside(owner)
+    local window = ns.settings
+    GameTooltip:ClearAllPoints()
+    if not window then
+        GameTooltip:SetPoint("BOTTOM", owner, "TOP", 0, ns.PADDING)
+        GameTooltip:Show()
+        return
+    end
+    local top = owner:GetTop()
+    local windowTop = window:GetTop()
+    local down = (type(top) == "number" and type(windowTop) == "number") and (top - windowTop) or 0
+    GameTooltip:SetPoint("TOPLEFT", window, "TOPRIGHT", ns.PADDING, down)
+    GameTooltip:Show()
+    local right, screen = GameTooltip:GetRight(), UIParent:GetRight()
+    if type(right) == "number" and type(screen) == "number" and right > screen then
+        GameTooltip:ClearAllPoints()
+        GameTooltip:SetPoint("TOPRIGHT", window, "TOPLEFT", -ns.PADDING, down)
+    end
+end
+
 local function MarkWhatGoes(button, area)
     local tint = area:CreateTexture(nil, "BACKGROUND")
     tint:SetAllPoints(area)
@@ -528,6 +550,7 @@ ns.MakeChoice = MakeChoice
 ns.MakeText = MakeText
 ns.MakeGrip = MakeGrip
 ns.MarkWhatGoes = MarkWhatGoes
+ns.ShowTipBeside = ShowTipBeside
 ns.MakeZoneTop = MakeZoneTop
 ns.Reorderable = Reorderable
 ns.ZoneTitleMiddle = ZoneTitleMiddle

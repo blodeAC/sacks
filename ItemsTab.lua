@@ -322,7 +322,7 @@ local function SuggestName(rule, itemName)
     end
     if name then
         local word = CamelCase(name.value)
-        if name.op == "!contains" or name.op == "!matches" then word = "Not" .. word end
+        if name.op == "!contains" then word = "Not" .. word end
         base = base .. word
     end
     if quality then
@@ -355,8 +355,7 @@ local function PassesFilter(row, page)
     if mode == "fits" and not (page.fits and page.fits(row)) then return false end
     local search = page.search and page.search:GetText() or ""
     if type(search) == "string" and search ~= "" then
-        local op = PatternError(search) and "contains" or "matches"
-        if not TextMatches(op, search, row.name) then return false end
+        if not TextMatches("contains", search, row.name) then return false end
     end
     return true
 end
@@ -619,45 +618,38 @@ local function FindItem(text)
     for _, row in ipairs(BuildItemRows()) do
         local name = row.name:lower()
         if name == text then return row.itemID, 1 end
-        if name:find(text, 1, true) then found, count = row.itemID, count + 1 end
+        if ns.TextFound(text, name) then found, count = row.itemID, count + 1 end
     end
     if count == 1 then return found, 1 end
     return nil, count
 end
 
--- What you can type in a text box, shown when the mouse is over it. A "matches pattern" line takes the full set of symbols;
--- the other lines only split alternatives with |.
+-- What you can type in a text box, shown beside the window when the mouse is over it: every text box takes Lua
+-- patterns, and plain text still finds itself word for word.
 local PATTERN_SYMBOLS = {
     { ".", "any one character" },
     { ".*", "any run of characters" },
     { "^", "start of the text" },
     { "$", "end of the text" },
+    { "[abc]", "any one of a, b, c" },
+    { "%d", "a digit (%a a letter, %s a space)" },
+    { "||", "either side, like fire||frost" },
 }
 
 local function ShowTextHelp(box, clause)
+    GameTooltip:SetOwner(box, "ANCHOR_NONE")
     if clause and clause.field == "item" then
-        GameTooltip:SetOwner(box, "ANCHOR_TOP")
         GameTooltip:SetText("Exact item", 1, 0.82, 0)
-        GameTooltip:AddLine("Type its name, or any part of the name that only one item you carry or have carried has.", 1, 1, 1, true)
-        GameTooltip:AddLine("Upper and lower case do not matter.", 0.5, 0.5, 0.5)
-        GameTooltip:Show()
-        return
+        GameTooltip:AddLine("Its name, or a part of it that only one item you carry or have carried has.", 1, 1, 1, true)
+    else
+        GameTooltip:SetText("Text", 1, 0.82, 0)
     end
-    local pattern = clause and (clause.op == "matches" or clause.op == "!matches")
-    GameTooltip:SetOwner(box, "ANCHOR_TOP")
-    GameTooltip:SetText(pattern and "Pattern" or "Text", 1, 0.82, 0)
-    if pattern then
-        for _, symbol in ipairs(PATTERN_SYMBOLS) do
-            GameTooltip:AddDoubleLine(symbol[1], symbol[2], 1, 1, 1, 0.8, 0.8, 0.8)
-        end
+    for _, symbol in ipairs(PATTERN_SYMBOLS) do
+        GameTooltip:AddDoubleLine(symbol[1], symbol[2], 1, 1, 1, 0.8, 0.8, 0.8)
     end
-    GameTooltip:AddDoubleLine("||", "either side, like fire||frost", 1, 1, 1, 0.8, 0.8, 0.8)
-    if not pattern then
-        -- the symbols only work in a pattern; say where they are rather than leave the list looking cut short
-        GameTooltip:AddLine('For  .  .*  ^  $  pick "matches pattern".', 0.5, 0.5, 0.5)
-    end
+    GameTooltip:AddLine("These are Lua patterns. Text typed as is always works too.", 0.5, 0.5, 0.5)
     GameTooltip:AddLine("Upper and lower case do not matter.", 0.5, 0.5, 0.5)
-    GameTooltip:Show()
+    ns.ShowTipBeside(box)
 end
 
 -- The boxes you type into (a number, or text), the warning at the right, and the label for an exact item.
@@ -843,9 +835,8 @@ local function ShowValueEntry(line, clause, x)
         wantText = true
         if not line.text:IsShown() then line.text:Show() end
         if line.text:GetText() ~= clause.value then line.text:SetText(clause.value) end
-        if clause.op == "matches" or clause.op == "!matches" then
-            if PatternError(clause.value) then line.warn:SetText("bad pattern") end
-        end
+        -- a broken pattern still finds the text word for word; the warning says the symbols in it are not working
+        if PatternError(clause.value) then line.warn:SetText("bad pattern") end
     elseif clause.field == "item" then
         -- a name box as wide as a long name, and what it found right after it
         line.text:ClearAllPoints()
@@ -1093,12 +1084,14 @@ local function BuildFilterRow(page, x0, onSackPage)
         end
     end)
     page.search:SetPoint("TOPLEFT", searchX + ns.TEXTBOX_ART_LEFT, 0)
+    page.search:SetScript("OnEnter", function(self) ShowTextHelp(self) end)
+    page.search:SetScript("OnLeave", function() GameTooltip:Hide() end)
     if onSackPage then return end
     -- a new sack that takes every item whose name fits the search, opened on the sack page
     page.searchSack = MakeButton(page, "Sack from search", nil, function()
         local text = page.search:GetText() or ""
         if text == "" then return Say("type something in the search box first") end
-        SackFromRule({ { field = "name", op = PatternError(text) and "contains" or "matches", value = text } })
+        SackFromRule({ { field = "name", op = "contains", value = text } })
     end)
     page.searchSack:SetPoint("TOPLEFT", searchX + ns.TEXTBOX_ART_LEFT + NAME_WIDTH + PADDING, 0)
 end
@@ -1182,14 +1175,14 @@ local function MakeTableRow(page, top, index)
     view:SetScript("OnEnter", function(self)
         self.hover:Show()
         if self.data then
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetOwner(self, "ANCHOR_NONE")
             if not pcall(GameTooltip.SetHyperlink, GameTooltip, "item:" .. self.data.itemID) then
                 GameTooltip:SetText(self.data.name)
             end
             GameTooltip:AddLine(" ")
             GameTooltip:AddLine(page.clickHint or "Click: select it (Ctrl-click: add to the selection)", 0.5, 0.8, 1)
             GameTooltip:AddLine("Right-click: open " .. tostring(self.data.sack), 0.5, 0.8, 1)
-            GameTooltip:Show()
+            ns.ShowTipBeside(self)
         end
     end)
     view:SetScript("OnLeave", function(self)

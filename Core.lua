@@ -64,10 +64,13 @@ ns.OnEvent("PLAYER_LOGIN", function()
         group.rule = group.rule or {}
         if IsOldRule(group.rule) then group.rule = ToConditions(group.rule) end
         UpgradeSort(group)
+        ns.UpgradeTextOps(group)
     end
     ns.EnsureCombatSack()
     EnsureFallback()
     UpgradeSort(SacksDB.fallback)
+    ns.UpgradeTextOps(SacksDB.fallback)
+    if SacksDB.defaults then ns.UpgradeTextOps(SacksDB.defaults) end
     MakeIcon()
     HookOwnBags()
     WrapUserBagToggles()
@@ -75,7 +78,7 @@ ns.OnEvent("PLAYER_LOGIN", function()
     Refresh()
 end)
 
-ns.OnEvent("BAG_UPDATE_DELAYED", Refresh)
+ns.OnEvent("BAG_UPDATE_DELAYED", function() ns.BagsChanged() end) -- held while the mouse is on a sack (Sacks.lua)
 ns.OnEvent("PLAYER_MONEY", function() ns.UpdateMoney() end)
 ns.OnEvent("BAG_UPDATE_COOLDOWN", function() ns.UpdateCooldowns() end)
 -- After a reload the game only knows the items' cooldowns a little after the sacks are built, and says nothing about
@@ -86,7 +89,7 @@ ns.OnEvent("SPELL_UPDATE_COOLDOWN", function() ns.UpdateCooldowns() end)
 ns.OnEvent("CURRENT_SPELL_CAST_CHANGED", function() ns.UpdateTargetDim() end)
 
 ns.OnEvent("PLAYER_REGEN_ENABLED", function()
-    if state.pending then Refresh() end
+    if state.pending then ns.BagsChanged() end -- still held if the mouse is on a sack
 end)
 
 ns.OnEvent("MERCHANT_SHOW", function() state.vendor = true; Refresh() end)
