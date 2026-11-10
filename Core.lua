@@ -86,6 +86,8 @@ ns.OnEvent("BAG_UPDATE_COOLDOWN", function() ns.UpdateCooldowns() end)
 ns.OnEvent("PLAYER_ENTERING_WORLD", function() ns.UpdateCooldowns() end)
 ns.OnEvent("SPELL_UPDATE_COOLDOWN", function() ns.UpdateCooldowns() end)
 
+ns.OnEvent("ITEM_LOCK_CHANGED", function(_, bag, slot) ns.UpdateLocked(bag, slot) end)
+
 -- Something starts or stops waiting for an item target, or what it can take changes: grey or restore the slots.
 ns.OnEvent("CURRENT_SPELL_CAST_CHANGED", function() ns.UpdateTargetDim() end)
 ns.OnEvent("UPDATE_SPELL_TARGET_ITEM_CONTEXT", function() ns.UpdateTargetDim() end)

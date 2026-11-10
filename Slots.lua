@@ -77,6 +77,12 @@ local function UpdateCooldown(button)
     else
         cooldown:SetCooldown(0, 0)
     end
+    -- as the game's bags do: an item whose cooldown has not started running yet (a potion used this fight) is drawn dark
+    local waiting = (duration or 0) > 0 and (enable == 0 or enable == false)
+    if button.icon then
+        local shade = waiting and 0.4 or 1
+        button.icon:SetVertexColor(shade, shade, shade)
+    end
 end
 
 local function UpdateCooldowns()
@@ -121,11 +127,38 @@ local function shown(name)
     return frame and frame.IsVisible and frame:IsVisible() or false
 end
 local function MovingWindow()
-    if shown("MerchantFrame") or shown("BankFrame") or shown("GuildBankFrame") or shown("TradeFrame") or shown("SendMailFrame") then
+    if shown("MerchantFrame") or shown("BankFrame") or shown("GuildBankFrame") or shown("TradeFrame") or shown("MailFrame")
+        or shown("AuctionFrame") or shown("AuctionHouseFrame") then
         return true, true
     end
-    if shown("MailFrame") or shown("AuctionFrame") or shown("AuctionHouseFrame") then return true, false end
     return false, false
+end
+
+-- What a right click does with one of those windows open, the way the game's bags do it (ContainerFrameItemButton_OnClick
+-- in the forever branch of Blizzard's UI): at a vendor, sell, except on the Buyback tab, and ask first for an item that
+-- can still be refunded; at the auction house, put it up for posting; anywhere else (bank, letter, trade, the old
+-- auction house), UseContainerItem moves it there.
+local function MoveTo(button)
+    local bag, slot = button.bag, button.slot
+    if shown("MerchantFrame") then
+        if MerchantFrame.selectedTab == 2 then return end
+        if ContainerFrame_GetExtendedPriceString then
+            local proxy = { count = 1 }
+            function proxy:GetSlotAndBagID() return slot, bag end
+            local ok, asked = pcall(ContainerFrame_GetExtendedPriceString, proxy)
+            if ok and asked then return end -- the game's "are you sure" about the refund is up
+        end
+    elseif shown("AuctionHouseFrame") then
+        if ItemLocation and AuctionHouseFrame.SetPostItem then
+            local where = ItemLocation:CreateFromBagAndSlot(bag, slot)
+            local listing = AuctionHouseFrame.IsListingAuctions and AuctionHouseFrame:IsListingAuctions()
+            local valid = C_AuctionHouse and C_AuctionHouse.IsSellItemValid and where:IsValid() and C_AuctionHouse.IsSellItemValid(where, false)
+            if listing or valid then AuctionHouseFrame:SetPostItem(where) end
+        end
+        return
+    end
+    local use = (C_Container and C_Container.UseContainerItem) or UseContainerItem
+    if use then use(bag, slot) end
 end
 ns.MovingWindow = MovingWindow
 
@@ -156,6 +189,37 @@ local function SetUpSlotClicks(button)
             end
             return
         end
+        -- Something on the cursor (an item, money, a vendor's item being bought): a left click puts it in your bags and
+        -- never uses this slot's item. The same item as this slot's goes onto this stack (putting a split stack back
+        -- together); anything else goes into a free bag slot rather than swapping with this one (see DropIntoFreeSlot):
+        -- the slot is only a view, and the sacks sort it anyway.
+        local cursorType, cursorMoney -- the second is the item ID, or the amount of money
+        if GetCursorInfo then cursorType, cursorMoney = GetCursorInfo() end
+        if mouse == "LeftButton" and cursorType and not (InCombatLockdown and InCombatLockdown()) then
+            if self.clickUse then
+                self:SetAttribute("type1", nil)
+                self.leftOff = true
+            end
+            if not down then
+                if cursorType == "guildbankmoney" and WithdrawGuildBankMoney then
+                    WithdrawGuildBankMoney(cursorMoney); ClearCursor()
+                elseif cursorType == "money" and DropCursorMoney then
+                    DropCursorMoney(); ClearCursor()
+                elseif cursorType == "merchant" and MerchantFrame and MerchantFrame.extendedCost and MerchantFrame_ConfirmExtendedItemCost then
+                    MerchantFrame_ConfirmExtendedItemCost(MerchantFrame.extendedCost)
+                elseif cursorType == "merchant" and MerchantFrame and MerchantFrame.highPrice and MerchantFrame_ConfirmHighCostItem then
+                    MerchantFrame_ConfirmHighCostItem(MerchantFrame.highPrice)
+                elseif self.bag and cursorType == "item" and cursorMoney == self.itemID then
+                    -- the same item: onto this stack, so a split stack goes back together (what the stack can't hold
+                    -- stays on the cursor, as in the game's bags)
+                    Container.PickupContainerItem(self.bag, self.slot)
+                else
+                    ns.DropIntoFreeSlot()
+                end
+                if StackSplitFrame then StackSplitFrame:Hide() end
+            end
+            return
+        end
         if mouse == "LeftButton" and self.clickUse and windowOpen and not (InCombatLockdown and InCombatLockdown()) then
             -- A sack set to use items on left click behaves like the game's bags with such a window open: no use, only
             -- pick up.
@@ -172,6 +236,7 @@ local function SetUpSlotClicks(button)
         if mouse == "LeftButton" and not down and self.bag and (not self.clickUse or self.leftOff) then
             Container.PickupContainerItem(self.bag, self.slot)
         end
+        if not down and StackSplitFrame then StackSplitFrame:Hide() end -- the game's bags close the splitter on any click
         -- The secure "use item" action would equip a bag or a piece of gear even with a vendor, bank or mailbox open. The
         -- game's own bags call UseContainerItem there, which sells, banks, attaches or trades it, so do that: the secure
         -- action is switched off for this click and the move is made once, when the button comes back up. Where a right
@@ -179,10 +244,7 @@ local function SetUpSlotClicks(button)
         if mouse == "RightButton" and self.bag and windowOpen and not (InCombatLockdown and InCombatLockdown()) then
             self:SetAttribute("type2", nil)
             self.selling = true
-            if not down and moves then
-                local use = (C_Container and C_Container.UseContainerItem) or UseContainerItem
-                if use then use(self.bag, self.slot) end
-            end
+            if not down and moves then MoveTo(self) end
         end
     end)
     button:SetScript("PostClick", function(self)
@@ -208,9 +270,17 @@ local function SetUpSlotClicks(button)
         if self.gone then return end
         if self.bag and not (CursorHasItem and CursorHasItem()) then Container.PickupContainerItem(self.bag, self.slot) end
     end)
+    -- Something dropped on the slot: into a free bag slot, nothing swapped (see DropIntoFreeSlot). The game also sends
+    -- this when you let go of a sack you were moving over a slot, with nothing on the cursor: then it does nothing.
     button:SetScript("OnReceiveDrag", function(self)
-        if self.gone then return end
-        if self.bag then Container.PickupContainerItem(self.bag, self.slot) end
+        if not (CursorHasItem and CursorHasItem()) then return end
+        local kind, itemID
+        if GetCursorInfo then kind, itemID = GetCursorInfo() end
+        if self.bag and not self.gone and kind == "item" and itemID == self.itemID then
+            Container.PickupContainerItem(self.bag, self.slot) -- the same item: onto this stack
+        else
+            ns.DropIntoFreeSlot()
+        end
     end)
 end
 
@@ -234,6 +304,12 @@ local function AddSlotLayers(button)
     button.over = CreateFrame("Frame", nil, button)
     button.over:SetAllPoints()
     button.over:SetFrameLevel(button.cooldown:GetFrameLevel() + 1)
+    -- the gold coin the game's bags put on grey junk while a vendor is open
+    button.junk = button.over:CreateTexture(nil, "OVERLAY")
+    if button.junk.SetAtlas and pcall(button.junk.SetAtlas, button.junk, "bags-junkcoin", true) then
+        button.junk:SetPoint("TOPLEFT", 1, 0)
+    end
+    button.junk:Hide()
     -- A plain frame laid over the slot ahead of time and kept hidden. In combat a slot whose item is gone cannot have
     -- its use action removed (it is secure), but showing this frame catches the click first, so the game is never
     -- asked to use an empty slot or another item that has moved into it.
@@ -380,3 +456,23 @@ ns.MakeSlotButton = MakeSlotButton
 ns.QuestMarker = QuestMarker
 ns.TintByQuality = TintByQuality
 ns.UpdateCooldown = UpdateCooldown
+
+-- Grey junk that sells for something shows the coin while a vendor is open, as in the game's bags.
+local function ShowJunk(button, item)
+    local junk = item and item.quality == 0 and not item.noValue and shown("MerchantFrame")
+    if junk then button.junk:Show() else button.junk:Hide() end
+end
+ns.ShowJunk = ShowJunk
+
+-- An item that is locked (on the cursor, in a trade, on a letter, being split) is drawn grey, as in the game's bags.
+local function UpdateLocked(bag, slot)
+    for _, frame in pairs(state.frames) do
+        for _, button in ipairs(rawget(frame, "buttons") or {}) do
+            if button.bag and button:IsShown() and not button.gone and (bag == nil or (button.bag == bag and button.slot == slot)) then
+                local info = Container.GetContainerItemInfo(button.bag, button.slot)
+                button.icon:SetDesaturated(type(info) == "table" and info.isLocked and true or false)
+            end
+        end
+    end
+end
+ns.UpdateLocked = UpdateLocked

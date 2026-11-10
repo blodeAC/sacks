@@ -11,19 +11,36 @@ local ReadingOrder = ns.ReadingOrder
 local TITLE_HEIGHT, TintByQuality, UpdateCooldown, state = ns.TITLE_HEIGHT, ns.TintByQuality, ns.UpdateCooldown, ns.state
 
 -- Dropping an item on a free-slots box puts it in the first free slot of a normal bag.
+-- Whatever is on the cursor (an item, or one being bought from a vendor) goes into a free bag slot: a special bag that
+-- takes it first, then a normal bag. Nothing is swapped: a sack's slots are views of bag slots, and the sacks sort it
+-- anyway. With no room it goes back where it came from and the game's "Inventory is full" shows.
 local function DropIntoFreeSlot()
-    if not (CursorHasItem and CursorHasItem()) then return end
-    for bag = 0, LastBag() do
-        local free, bagType = Container.GetContainerNumFreeSlots(bag)
-        if (bagType or 0) == 0 and (free or 0) > 0 then
-            for slot = 1, Container.GetContainerNumSlots(bag) do
-                if Container.GetContainerItemInfo(bag, slot) == nil then
+    local kind, itemID
+    if GetCursorInfo then kind, itemID = GetCursorInfo() end -- not "GetCursorInfo and GetCursorInfo()": that keeps only the first value
+    if not (CursorHasItem and CursorHasItem()) and kind ~= "merchant" then return end
+    local familyOf = GetItemFamily or (C_Item and C_Item.GetItemFamily)
+    local family = (kind == "item" and itemID and familyOf and familyOf(itemID)) or 0
+    local function FirstFree(bag)
+        for slot = 1, Container.GetContainerNumSlots(bag) or 0 do
+            if Container.GetContainerItemInfo(bag, slot) == nil then return slot end
+        end
+    end
+    for _, special in ipairs({ true, false }) do
+        for bag = 0, LastBag() do
+            local free, bagType = Container.GetContainerNumFreeSlots(bag)
+            bagType = bagType or 0
+            local fits = special and bagType ~= 0 and bit and bit.band(family, bagType) ~= 0 or (not special and bagType == 0)
+            if fits and (free or 0) > 0 then
+                local slot = FirstFree(bag)
+                if slot then
                     Container.PickupContainerItem(bag, slot)
                     return
                 end
             end
         end
     end
+    if ClearCursor then ClearCursor() end
+    if UIErrorsFrame and ERR_INV_FULL then UIErrorsFrame:AddMessage(ERR_INV_FULL, 1, 0.1, 0.1) end
 end
 
 -- Hovering a free-slots box lists every bag, so the free slots in special bags are never hidden from you.
@@ -104,9 +121,13 @@ local function MakeGroupFrame(group)
         if DockFrame() then return end
         -- Without a title the whole sack is the handle, and it takes shift to avoid dragging one by accident.
         if group.title == "NONE" and not (IsShiftKeyDown and IsShiftKeyDown()) then return end
+        if ns.LogSackDrag then ns.LogSackDrag("sack drag start", group) end
         BeginSackDrag(frame)
     end)
-    frame.handle:SetScript("OnDragStop", function() FinishDrag(group, frame) end)
+    frame.handle:SetScript("OnDragStop", function()
+        FinishDrag(group, frame)
+        if ns.LogSackDrag then ns.LogSackDrag("sack drag stop", group) end
+    end)
     -- Right-click the title (or a sack with no title) opens the settings window on this sack.
     frame.handle:SetScript("OnMouseUp", function(_, mouse)
         if mouse == "RightButton" and ns.EditSack then ns.EditSack(group) end
@@ -217,7 +238,8 @@ local function FillSlot(button, item, group, size)
     end
     button.icon:SetTexture(item.icon)
     QuestMarker(button.quest, item)
-    button.icon:SetDesaturated(false)
+    button.icon:SetDesaturated(item.locked and true or false) -- locked: on the cursor, in a trade, on a letter
+    ns.ShowJunk(button, item)
     button.gone = false
     button.dead:Hide()
     ns.ApplyTargetDim(button)
@@ -463,7 +485,7 @@ local function RefreshCounts()
                 if ok and type(info) == "table" and info.itemID == button.itemID then
                     local stack = info.stackCount or 1
                     button.count:SetText(stack > 1 and stack or "")
-                    button.icon:SetDesaturated(false)
+                    button.icon:SetDesaturated(info.isLocked and true or false)
                     if free and not button:GetAttribute("item") then button:SetAttribute("item", button.bag .. " " .. button.slot) end
                     button.gone = false
                     button.dead:Hide()
@@ -616,6 +638,7 @@ ns.CreateSack = CreateSack
 ns.HideRemoved = HideRemoved
 ns.Refresh = Refresh
 ns.HoldStill = HoldStill
+ns.DropIntoFreeSlot = DropIntoFreeSlot
 ns.LetGo = LetGo
 ns.BagsChanged = BagsChanged
 ns.WidgetGroup = WidgetGroup

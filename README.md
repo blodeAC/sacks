@@ -17,7 +17,9 @@ or copy this folder to `World of Warcraft/_forever_/Interface/AddOns/sacks`.
 ## Using it
 
 - Click the bag icon on the minimap edge, or type `/sacks`, to open the settings window.
-- Right-click an item to use it. With a vendor, bank, guild bank, trade window or the mailbox's send tab open, it is sold, banked, traded or attached instead, like the game's own bags; with the mailbox's inbox or the auction house open, right-click does nothing. An item is never used or equipped while one of those windows is open.
+- Right-click an item to use it. With a vendor, bank, guild bank, trade window, mailbox or auction house open it does what the game's own bags do instead: sells it (not on the vendor's Buyback tab, and asking first for an item that can still be refunded), banks, trades or attaches it, or puts it up for auction. An item is never used or equipped while one of those windows is open.
+- With something on the cursor (an item, money, an item you are buying), clicking a slot puts it there, as in the game's bags, even in a sack that uses items on left click.
+- As in the game's bags: a locked item (on the cursor, in a trade, on a letter) is drawn grey, an item whose cooldown hasn't started yet is drawn dark, and grey junk shows a coin while a vendor is open.
 - Right-click a sack's title to open it in the settings window. Hovering the title says what the sack is docked to.
 - Drag a sack by its title bar to move it. Dropped flush against another sack, it docks to it and follows it; dropped against two (in a corner), it docks to one and keeps to its side of the other. A sack that grows into one beside it pushes that one aside, and it comes back when there is room. Edges snap to the screen and to other sacks (hold Alt for a free drag). A sack dropped against another one stays docked to it when either changes size.
 - `B` and the bag buttons still open the game's own bags. The option on the Settings page stops the game opening them by itself (vendors and so on).

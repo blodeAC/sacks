@@ -3,6 +3,21 @@
 local _, ns = ...
 local Say, state = ns.Say, ns.state
 
+-- /sacks clicks also says every time anything picks up a bag item (sacks or the game), with the line of code that did
+-- it: to find what leaves an item on the cursor after moving a sack.
+if hooksecurefunc and C_Container and C_Container.PickupContainerItem then
+    hooksecurefunc(C_Container, "PickupContainerItem", function(bag, slot)
+        if not state.debugClicks then return end
+        local from = debugstack and debugstack(3, 1, 0) or "?"
+        Say(string.format("pickup bag=%s slot=%s cursorAfter=%s from %s", tostring(bag), tostring(slot),
+            tostring(GetCursorInfo and GetCursorInfo()), (from:gsub("\n", " "))))
+    end)
+end
+-- and when a sack starts and stops being moved
+function ns.LogSackDrag(what, group)
+    if state.debugClicks then Say(what .. " " .. tostring(group and group.name) .. " cursor=" .. tostring(GetCursorInfo and GetCursorInfo())) end
+end
+
 -- /sacks clicks: say what every click on a sack's item does.
 function ns.LogClick(button, mouse, down, atVendor)
     Say(string.format("click %s %s: clickUse=%s type1=%s type2=%s onKeyDown=%s item=%s bag=%s slot=%s vendor=%s combat=%s", tostring(mouse),

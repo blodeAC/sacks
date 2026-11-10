@@ -70,6 +70,7 @@ local function ReadSlot(bag, slot)
         entry.link, entry.count, entry.quality, entry.itemID, entry.icon =
             info.hyperlink, info.stackCount, info.quality, info.itemID, info.iconFileID
         entry.bound = info.isBound and 1 or 0
+        entry.locked, entry.noValue = info.isLocked and true or false, info.hasNoValue and true or false
     else
         entry.icon, entry.count, _, entry.quality, _, _, entry.link = Container.GetContainerItemInfo(bag, slot)
     end
