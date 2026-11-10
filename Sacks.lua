@@ -578,6 +578,7 @@ local function BagsChanged()
         MarkStale(items) -- what arrived is drawn in New, without moving anything
         UpdateWidget(free, special)
         RefreshFresh()
+        ns.UpdateTargetDim() -- what a waiting crate can take depends on what is left
     end)
     if ns.RefreshSettings then Guarded("settings", ns.RefreshSettings) end
 end

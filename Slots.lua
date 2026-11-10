@@ -92,7 +92,7 @@ ns.UpdateCooldowns = UpdateCooldowns
 -- comments below. These are secure attributes and scripts, so a slot is set up once and never rebuilt in combat.
 -- Shift-click (and the other modified clicks) on an item: link it into chat or preview it, like the game's bags do,
 -- otherwise open the stack splitter. Returns true when the click was used up.
-local DIM_ALPHA = 0.65 -- how dark an item that cannot be used on the waiting item is drawn
+local DIM_ALPHA = 0.8 -- how dark a slot the waiting item cannot take is drawn: the game's own bags use black at 0.8
 
 local function ModifiedClick(button)
     if not button.bag then return false end
@@ -145,23 +145,22 @@ local function SetUpSlotClicks(button)
         if self.gone then return end
         local windowOpen, moves = MovingWindow()
         if state.debugClicks then ns.LogClick(self, mouse, down, windowOpen) end
+        -- An item waiting for a target (a crate to fill, for example): a left click hands it this item. Only the button's
+        -- own secure "use item" may do that (calling UseContainerItem from here is blocked by the game), so for this
+        -- click that action is switched on, whatever the sack does on left click otherwise, and put back afterwards.
+        if mouse == "LeftButton" and self.bag and not (InCombatLockdown and InCombatLockdown())
+            and SpellCanTargetItem and SpellCanTargetItem() then
+            if not down and self:GetAttribute("type1") ~= "item" then
+                self.restoreType1 = self:GetAttribute("type1") or false
+                self:SetAttribute("type1", "item")
+            end
+            return
+        end
         if mouse == "LeftButton" and self.clickUse and windowOpen and not (InCombatLockdown and InCombatLockdown()) then
             -- A sack set to use items on left click behaves like the game's bags with such a window open: no use, only
             -- pick up.
             self:SetAttribute("type1", nil)
             self.leftOff = true
-        end
-        -- An item waiting for a target (a crate to fill, for example): clicking a slot hands it that item, as the game's
-        -- bags do. Picking the item up instead would cancel the targeting.
-        if mouse == "LeftButton" and not down and self.bag and not (InCombatLockdown and InCombatLockdown())
-            and SpellCanTargetItem and SpellCanTargetItem() then
-            if self.clickUse then
-                self:SetAttribute("type1", nil)
-                self.leftOff = true
-            end
-            local use = (C_Container and C_Container.UseContainerItem) or UseContainerItem
-            if use then use(self.bag, self.slot) end
-            return
         end
         if mouse == "LeftButton" and not down and not (InCombatLockdown and InCombatLockdown()) and ModifiedClick(self) then
             if self.clickUse then   -- a modified click must not also use the item
@@ -187,6 +186,10 @@ local function SetUpSlotClicks(button)
         end
     end)
     button:SetScript("PostClick", function(self)
+        if self.restoreType1 ~= nil then
+            self:SetAttribute("type1", self.restoreType1 or nil)
+            self.restoreType1 = nil
+        end
         if self.leftOff then
             self.leftOff = nil
             self:SetAttribute("type1", "item")
@@ -243,9 +246,13 @@ local function AddSlotLayers(button)
     button.count:SetPoint("BOTTOMRIGHT", -3, 3)
     -- A small square in the top corner: green when the item is in a special bag, amber when it fits a special bag
     -- that has room but sits in a normal bag, grey when it fits one that is full.
-    -- Over the item art while an item waits for a target (a crate to fill) and this item is not one it can take.
-    button.dim = button:CreateTexture(nil, "OVERLAY")
-    button.dim:SetAllPoints(button.icon)
+    -- Over the whole slot, count included, while something waits for an item target and this item is not one it can
+    -- take: as the game's bags draw it. On a frame of its own above the count, taking no mouse.
+    button.shade = CreateFrame("Frame", nil, button)
+    button.shade:SetAllPoints()
+    button.shade:SetFrameLevel(button.over:GetFrameLevel() + 1)
+    button.dim = button.shade:CreateTexture(nil, "OVERLAY")
+    button.dim:SetAllPoints()
     button.dim:SetColorTexture(0, 0, 0, DIM_ALPHA)
     button.dim:Hide()
     button.mark = button:CreateTexture(nil, "OVERLAY")
@@ -283,28 +290,26 @@ local function SetUpSlotTooltip(button)
     end)
 end
 
--- While an item waits for a target (a crate to fill), the game's bags dim what it cannot take. Same here, driven by the
--- game's own answer for each item.
-local function TargetingItems()
-    return (SpellIsTargeting and SpellIsTargeting() and SpellCanTargetItem and SpellCanTargetItem() and SpellCanTargetItemID) and true or false
-end
-
-local function ApplyTargetDim(button, targeting)
-    if targeting == nil then targeting = TargetingItems() end
+-- While something waits for an item target (a crate to fill, a whetstone, an enchant, food for a pet), a slot is greyed
+-- when it cannot take it: the very question the game's own bags ask, so the same slots grey (Mismatch); Match and
+-- "nothing is being chosen" (DoesNotApply) leave it as it is. The game counts a crate's bundle across every stack.
+local MISMATCH = ItemButtonUtil and ItemButtonUtil.ItemContextMatchResult and ItemButtonUtil.ItemContextMatchResult.Mismatch
+local function ApplyTargetDim(button)
     local dim = false
-    if targeting and button.bag and button.itemID then
-        local ok, valid = pcall(SpellCanTargetItemID, button.itemID)
-        dim = ok and not valid
+    if MISMATCH and button.bag and button.itemID and not button.gone and ItemLocation and ItemLocation.CreateFromBagAndSlot then
+        local ok, result = pcall(function()
+            return ItemButtonUtil.GetItemContextMatchResultForItem(ItemLocation:CreateFromBagAndSlot(button.bag, button.slot))
+        end)
+        dim = ok and result == MISMATCH
     end
     if dim then button.dim:Show() else button.dim:Hide() end
 end
 ns.ApplyTargetDim = ApplyTargetDim
 
 local function UpdateTargetDim()
-    local targeting = TargetingItems()
     for _, frame in pairs(state.frames) do
         for _, button in ipairs(rawget(frame, "buttons") or {}) do
-            if button:IsShown() then ApplyTargetDim(button, targeting) end
+            if button:IsShown() then ApplyTargetDim(button) end
         end
     end
 end

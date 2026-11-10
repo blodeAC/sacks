@@ -85,8 +85,10 @@ ns.OnEvent("BAG_UPDATE_COOLDOWN", function() ns.UpdateCooldowns() end)
 -- bag items then: the cooldowns are read again when the world is entered and when the game's cooldowns update.
 ns.OnEvent("PLAYER_ENTERING_WORLD", function() ns.UpdateCooldowns() end)
 ns.OnEvent("SPELL_UPDATE_COOLDOWN", function() ns.UpdateCooldowns() end)
--- An item waiting for a target (a crate to fill) starts or stops: dim or restore the slots that cannot take it.
+
+-- Something starts or stops waiting for an item target, or what it can take changes: grey or restore the slots.
 ns.OnEvent("CURRENT_SPELL_CAST_CHANGED", function() ns.UpdateTargetDim() end)
+ns.OnEvent("UPDATE_SPELL_TARGET_ITEM_CONTEXT", function() ns.UpdateTargetDim() end)
 
 ns.OnEvent("PLAYER_REGEN_ENABLED", function()
     if state.pending then ns.BagsChanged() end -- still held if the mouse is on a sack
