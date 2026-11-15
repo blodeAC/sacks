@@ -915,7 +915,10 @@ local function BuildLooks(page, L)
     page.titleDefault:SetPoint("TOPLEFT", defaultLeft, -rowTop(4))
     -- its art reaches past its frame on both sides
     page.titleEdit:SetSize(insertLeft - PADDING - controls - 2 * ns.TEXTBOX_ART_LEFT, BUTTON_HEIGHT)
-    L.y = top + PREVIEW_HEIGHT + 2 * PADDING
+    -- under the picture of where it sits: bring it back to the middle of the screen, if it is lost
+    page.middle = MakeButton(page, "Move to the middle of the screen", nil, function() ns.ResetPosition(EditedGroup()) end)
+    page.middle:SetPoint("TOPLEFT", 0, -(top + PREVIEW_HEIGHT + PADDING))
+    L.y = top + PREVIEW_HEIGHT + PADDING + BUTTON_HEIGHT + PADDING
 end
 
 -- The order of the items: a numbered list of steps, each a rule or a field to sort by, then the items in that order.
@@ -1168,24 +1171,39 @@ local function BuildHead(page)
         if group == EditedGroup() and self:GetText() ~= group.name then self:SetText(group.name) end
     end)
     head.fixedName = MakeText(head, "GameFontNormalLarge", "TOPLEFT", nameX, -TEXT_DROP)
+    -- what a built-in sack is for; cut short with "..." when the row has no room for all of it
     head.about = MakeText(head, "GameFontDisable", "TOPLEFT", 0, 0)
+    head.about:SetWordWrap(false)
+    head.about:SetJustifyH("LEFT")
+
+    -- After the name: the two ticks; at the right end, Delete.
+    head.delete = MakeButton(head, "Delete sack", nil, function() DeleteSack(EditedGroup()) end)
+    head.delete:SetPoint("TOPRIGHT", 0, 0)
+    local checkY = -(BUTTON_HEIGHT - CHECK_SIZE) / 2
+    local function CheckWidth(words) return CHECK_SIZE + 2 + math.ceil(TextWidth(words, "GameFontHighlight")) end
+    head.gravity = MakeCheck(head, "Falls to the bottom", function(self)
+        EditedGroup().gravity = self:GetChecked() and true or nil
+        Refresh()
+    end)
+    head.gravity.width = CheckWidth("Falls to the bottom")
+    SetTip(head.gravity, "Falls to the bottom", "It drops straight down until it rests on the bottom of the screen or on a sack under it.",
+        "Its dock still sets where it is left to right. When a sack under it grows, it is lifted on top; nothing ever pulls it up off the bottom.")
     head.use = MakeCheck(head, "Left-click uses its items", function(self)
         EditedGroup().useOnClick = self:GetChecked() and true or nil
         Refresh()
     end)
-    head.use:SetPoint("TOPLEFT", nameX + NAME_WIDTH + 2 * PADDING, -(BUTTON_HEIGHT - CHECK_SIZE) / 2)
+    head.use.width = CheckWidth("Left-click uses its items")
     SetTip(head.use, "Left-click uses its items", "Left-click an item in this sack to use it, like an action bar. Hold and drag to move it.",
         "The sack gets a title, border and name in the list in this colour. The colour is set on the Settings page.")
-    head.delete = MakeButton(head, "Delete sack", nil, function() DeleteSack(EditedGroup()) end)
-    head.delete:SetPoint("TOPRIGHT", 0, 0)
-    head.middle = MakeButton(head, "Move to the middle of the screen", nil, function() ns.ResetPosition(EditedGroup()) end)
-    head.middle:SetPoint("TOPRIGHT", head.delete, "TOPLEFT", -PADDING, 0)
+    head.checkY = checkY
+    head.nameX = nameX
 end
 
 -- Sets the top row for this sack and returns how tall it is.
 local function RefreshHead(page, group)
     local head = page.head
-    if group.builtin or group.fixed or group.isDefaults then
+    local fixed = group.builtin or group.fixed or group.isDefaults
+    if fixed then
         head.name:Hide()
         head.fixedName:SetText(group.name)
         head.fixedName:Show()
@@ -1194,7 +1212,6 @@ local function RefreshHead(page, group)
         head.about:ClearAllPoints()
         head.about:SetPoint("LEFT", head.fixedName, "RIGHT", 2 * PADDING, 0)
         head.about:Show()
-        head.delete:Hide()
     else
         head.fixedName:Hide()
         head.about:Hide()
@@ -1205,28 +1222,50 @@ local function RefreshHead(page, group)
             head.name.group = group
             if head.name:GetText() ~= group.name then head.name:SetText(group.name) end
         end
-        head.delete:Show()
     end
-    if group.isDefaults then head.middle:Hide() else head.middle:Show() end
-    -- nothing in New can be used, and the words about it sit where the box would be
-    if group.builtin or group.isDefaults then
-        head.use:Hide()
-    else
-        head.use:ClearAllPoints()
-        if group.fixed then
-            head.use:SetPoint("LEFT", head.about, "RIGHT", 3 * PADDING, 0)
+    -- One row: the name, the two ticks after it, Delete at the right end.
+    local right = FULL
+    if fixed then head.delete:Hide() else head.delete:Show(); right = right - head.delete:GetWidth() - 2 * PADDING end
+    if page.layout and page.layout.middle then
+        if group.isDefaults then page.layout.middle:Hide() else page.layout.middle:Show() end
+    end
+    -- the ticks go right after the name box (or, for Other and New, at the right end, the description cut short before them)
+    local checks = {}
+    for _, entry in ipairs({ { head.use, not (group.builtin or group.isDefaults), group.useOnClick },
+        { head.gravity, not group.isDefaults, group.gravity } }) do
+        local check, shown, on = entry[1], entry[2], entry[3]
+        check:ClearAllPoints()
+        if shown then
+            check:SetChecked(on and true or false)
+            check:Show()
+            checks[#checks + 1] = check
         else
-            head.use:SetPoint("LEFT", head.name, "RIGHT", 2 * PADDING, 0)
+            check:Hide()
         end
-        head.use:SetChecked(group.useOnClick and true or false)
-        -- its words in the colour that marks such sacks (title, border, name in the list), so the colour explains itself
-        local markR, markG, markB = ns.ClickColor()
-        if markR then head.use.label:SetTextColor(markR, markG, markB) else head.use.label:SetTextColor(1, 1, 1) end
-        head.use:Show()
     end
+    if fixed then
+        for index = #checks, 1, -1 do
+            right = right - checks[index].width
+            checks[index]:SetPoint("TOPLEFT", right, head.checkY)
+            right = right - 3 * PADDING
+        end
+    else
+        local x = head.nameX + NAME_WIDTH + 3 * PADDING
+        for _, check in ipairs(checks) do
+            check:SetPoint("TOPLEFT", x, head.checkY)
+            x = x + check.width + 3 * PADDING
+        end
+    end
+    -- its words in the colour that marks such sacks (title, border, name in the list), so the colour explains itself
+    local markR, markG, markB = ns.ClickColor()
+    if markR then head.use.label:SetTextColor(markR, markG, markB) else head.use.label:SetTextColor(1, 1, 1) end
+    if fixed then
+        local aboutLeft = head.nameX + math.ceil(TextWidth(group.name, "GameFontNormalLarge")) + 2 * PADDING
+        head.about:SetWidth(math.max(0, right - aboutLeft))
+    end
+    head:SetHeight(BUTTON_HEIGHT)
     return BUTTON_HEIGHT + PADDING
 end
-
 ---------------------------------------------------------------------------------------------------
 -- Takes: the sack's lines, applied as you change them, over the table of items that shows what they take. Undo
 -- changes goes back to what the sack took when you opened it here.

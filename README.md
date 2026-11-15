@@ -57,6 +57,12 @@ Sacks whose items left-click uses have their name in the list in the marking col
 
 A sack's order is a list of up to 10 steps, one row each. A step is either a **rule** ("Items where tooltip contains mana": the items that match come first) or a **sort field** (any field a rule can test, plus number carried and bag position, ascending or descending). A step only decides between two items when every step above it ties. Pinned items always come first. **+ And** adds another condition to a rule step. Drag a step by its dots to move it. For example, one rule step `tooltip contains mana` followed by one `tooltip contains heals` puts mana drinks first, then bandages, then everything else.
 
+## Docks on screen
+
+Drop a sack flush against another to dock it; it then moves with that one. Every dock has a seam, the gap between the two sacks: hover it and it lights up and says which sacks it joins; click it to cut the dock (the docked sack stays where it is). Hovering a sack's title shows its docks as gold lines and names them.
+
+Tick **Falls to the bottom** on a sack's page and it drops straight down until it rests on the bottom of the screen or on a sack under it, like stacking blocks. Its dock still sets where it is left to right. When a sack under it grows, it is lifted on top; it is never pulled up off the bottom.
+
 ## Holding still
 
 While the mouse is on a sack, the sacks hold still. Selling, banking or using items leaves their slots where they are, dimmed and inert, so the next item under your cursor stays put. New items show in the New sack until then. Counts still update. When the mouse leaves the sacks, everything catches up at once.

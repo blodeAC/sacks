@@ -334,11 +334,19 @@ local function PushApart(groups)
                     elseif HangsFrom(a.group, b.group) then mover, still = a, b
                     elseif HangsFrom(b.group, a.group) then mover, still = b, a
                     else mover, still = (a.index > b.index) and a or b, (a.index > b.index) and b or a end
+                    -- A sack that falls to the bottom is never pushed up or down. Hanging under one that doesn't fall,
+                    -- the other one gives way instead: it is pushed up, on top.
+                    local OPPOSITE = { TOP = "BOTTOM", BOTTOM = "TOP", LEFT = "RIGHT", RIGHT = "LEFT" }
+                    if mover.group.gravity and not still.group.gravity and (side == "TOP" or side == "BOTTOM") then
+                        mover, still, side = still, mover, OPPOSITE[side]
+                    end
                     local mine, theirs = Rect(mover.frame), Rect(still.frame)
                     local ways = {
                         RIGHT = { theirs.right + SNAP_GAP - mine.left, 0 }, LEFT = { theirs.left - SNAP_GAP - mine.right, 0 },
                         TOP = { 0, theirs.top + SNAP_GAP - mine.bottom }, BOTTOM = { 0, theirs.bottom - SNAP_GAP - mine.top },
                     }
+                    -- a sack that falls to the bottom is only ever pushed sideways
+                    if mover.group.gravity then ways.TOP, ways.BOTTOM = nil, nil end
                     local way = side and ways[side]
                     if not way then
                         for _, each in pairs(ways) do
@@ -356,6 +364,58 @@ local function PushApart(groups)
             end
         end
         if not moved then break end
+    end
+end
+
+-- Sacks ticked "Falls to the bottom" drop straight down until they rest on the bottom of the screen or on a sack under
+-- them (one that overlaps them left to right and is lower), like stacking blocks. Their dock still sets where they are
+-- left to right; only the height is gravity's. The lowest settles first, and whatever is docked to a sack moves with it,
+-- so a stack builds up from the bottom: nothing is ever pulled up off the bottom, and a sack under one that grows lifts
+-- what rests on it. Nothing is saved.
+local function ApplyGravity(all)
+    local rects = {}
+    for _, group in ipairs(all) do
+        local frame = state.frames[group]
+        local r = frame and frame:IsShown() and Rect(frame)
+        if r then rects[group] = r end
+    end
+    local waiting, settled = {}, {}
+    for _, group in ipairs(all) do if group.gravity and rects[group] then waiting[group] = true end end
+    while next(waiting) do
+        local lowest
+        for group in pairs(waiting) do
+            if not lowest or rects[group].bottom < rects[lowest].bottom then lowest = group end
+        end
+        waiting[lowest] = nil
+        local me, frame = rects[lowest], state.frames[lowest]
+        local middle, floor = (me.bottom + me.top) / 2, 0
+        for other, r in pairs(rects) do
+            if other ~= lowest and r.left < me.right - 1 and r.right > me.left + 1 and (r.bottom + r.top) / 2 < middle then
+                floor = math.max(floor, r.top + SNAP_GAP)
+            end
+        end
+        local dy = floor - me.bottom
+        if math.abs(dy) > 0.5 then
+            frame:ClearAllPoints()
+            frame:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", me.left, floor)
+            settled[lowest] = true
+            -- It moved dy, and so did what hangs from it: the sacks docked to it (and to those), except one that has
+            -- settled on its own already (it no longer follows, and neither does what hangs from it).
+            local moved, grew = { [lowest] = true }, true
+            while grew do
+                grew = false
+                for group in pairs(rects) do
+                    if not moved[group] and not settled[group] then
+                        local target = DockTarget(group)
+                        if target and moved[target] then moved[group], grew = true, true end
+                    end
+                end
+            end
+            for group in pairs(moved) do
+                local r = rects[group]
+                r.bottom, r.top = r.bottom + dy, r.top + dy
+            end
+        end
     end
 end
 
@@ -412,7 +472,25 @@ local function PlaceGroups()
         end
         if hidden then frame:Hide() else frame:Show() end
     end
-    if not vendor then PushApart(groups) end
+    if vendor then ns.UpdateSeams(groups, true) end -- no seams while the sacks are stacked beside a vendor
+end
+
+-- Once everything is placed (the sacks, and the free-slots and gold boxes, which sacks can dock to as well): sacks that
+-- fall to the bottom settle, sacks that grew into each other are pushed apart, and the seams are drawn. Not at a vendor
+-- (the sacks are stacked beside it then). A drop or a setting settles even with the mouse on a sack; what changes
+-- in the bags while the sacks hold still never gets here (see BagsChanged in Sacks.lua).
+local function Settle()
+    if DockFrame() then return end
+    local groups = AllGroups()
+    local all = {}
+    for _, group in ipairs(groups) do all[#all + 1] = group end
+    for _, box in ipairs({ SacksDB.widget, SacksDB.money }) do
+        if box and state.frames[box] and state.frames[box]:IsShown() then all[#all + 1] = box end
+    end
+    ApplyGravity(all)
+    PushApart(groups)
+    ApplyGravity(all) -- a sideways push can leave one hanging, or over a new floor
+    ns.UpdateSeams(groups, false)
 end
 
 -- In words, for the tooltip of a sack's title: what it is docked to, or what pushed it aside.
@@ -427,7 +505,132 @@ local function DockWords(group)
     end
     local pusher = state.pushedBy and state.pushedBy[group]
     if pusher then lines[#lines + 1] = "Pushed aside by " .. pusher.name .. ", which grew into it. It goes back when there is room." end
+    if group.gravity then lines[#lines + 1] = "Falls to the bottom: it rests on the bottom of the screen or on the sack under it." end
+    local docked = {}
+    for _, other in ipairs(AllGroups()) do
+        if other ~= group and DockTarget(other) == group then
+            docked[#docked + 1] = other.name .. " (" .. (SIDE_WORDS[other.dock.side] or "beside") .. " it)"
+        end
+    end
+    if #docked > 0 then lines[#lines + 1] = "Docked to it: " .. table.concat(docked, ", ") .. ". They move with it." end
+    if target or #docked > 0 then lines[#lines + 1] = "Click the gold seam between two sacks to cut their dock." end
     return lines
+end
+
+-- While the mouse is on a sack's title, its docks show as gold lines in the gaps: the one to the sack it follows, and
+-- those of the sacks docked to it.
+local FACING = { RIGHT = "LEFT", LEFT = "RIGHT", TOP = "BOTTOM", BOTTOM = "TOP" }
+local function DockLine(frame, side)
+    local line = rawget(frame, "dockLine")
+    if not line then
+        line = frame:CreateTexture(nil, "OVERLAY")
+        line:SetColorTexture(1, 0.82, 0, 0.9)
+        frame.dockLine = line
+    end
+    local edge, half = FACING[side], SNAP_GAP / 2
+    line:ClearAllPoints()
+    if edge == "LEFT" or edge == "RIGHT" then
+        local x = edge == "LEFT" and -half or half
+        line:SetPoint("TOP", frame, "TOP" .. edge, x, 0)
+        line:SetPoint("BOTTOM", frame, "BOTTOM" .. edge, x, 0)
+        line:SetWidth(2)
+    else
+        local y = edge == "BOTTOM" and -half or half
+        line:SetPoint("LEFT", frame, edge .. "LEFT", 0, y)
+        line:SetPoint("RIGHT", frame, edge .. "RIGHT", 0, y)
+        line:SetHeight(2)
+    end
+    line:Show()
+end
+
+local function HideDockLines()
+    for _, frame in pairs(state.frames) do
+        local line = rawget(frame, "dockLine")
+        if line then line:Hide() end
+    end
+end
+
+-- Each dock has a seam: the gap between the two sacks, which takes the mouse. Hovering it lights it up and says which
+-- two sacks it joins; clicking it cuts the dock (the docked sack stays exactly where it is). It reaches a little into
+-- both sacks' margins, never over their slots, so it is easy to hit.
+local SEAM_REACH = PADDING - 1
+local function Seam(frame)
+    local seam = rawget(frame, "seam")
+    if seam then return seam end
+    seam = CreateFrame("Button", nil, frame)
+    seam:RegisterForClicks("LeftButtonUp")
+    seam.line = seam:CreateTexture(nil, "OVERLAY")
+    seam.line:SetColorTexture(1, 0.82, 0, 0.9)
+    seam.line:Hide()
+    -- a seam whose dock is gone (cut some other way since it was drawn) just goes away
+    local function stale(self)
+        if self.group and self.group.dock and DockTarget(self.group) == self.target then return false end
+        self:Hide()
+        GameTooltip:Hide()
+        return true
+    end
+    seam:SetScript("OnEnter", function(self)
+        if stale(self) then return end
+        self.line:Show()
+        local group, target = self.group, self.target
+        GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
+        GameTooltip:SetText(group.name .. " is docked " .. (SIDE_WORDS[group.dock.side] or "to") .. " " .. target.name, 1, 0.82, 0)
+        GameTooltip:AddLine("It moves with " .. target.name .. ".", 1, 1, 1, true)
+        GameTooltip:AddLine("Click to cut: " .. group.name .. " stays exactly where it is.", 0.5, 0.8, 1, true)
+        GameTooltip:Show()
+    end)
+    seam:SetScript("OnLeave", function(self)
+        self.line:Hide()
+        GameTooltip:Hide()
+    end)
+    seam:SetScript("OnClick", function(self)
+        if stale(self) then return end
+        GameTooltip:Hide()
+        ns.Undock(self.group)
+    end)
+    frame.seam = seam
+    return seam
+end
+
+local function UpdateSeams(groups, off)
+    for _, group in ipairs(groups) do
+        local frame = state.frames[group]
+        local target = not off and DockTarget(group)
+        local targetFrame = target and state.frames[target]
+        if frame and frame:IsShown() and targetFrame and targetFrame:IsShown() then
+            local seam = Seam(frame)
+            seam.group, seam.target = group, target
+            seam:SetFrameLevel(math.max(frame:GetFrameLevel(), targetFrame:GetFrameLevel()) + 10)
+            local edge, half, reach = FACING[group.dock.side], SNAP_GAP / 2, SEAM_REACH + SNAP_GAP / 2
+            seam:ClearAllPoints()
+            seam.line:ClearAllPoints()
+            if edge == "LEFT" or edge == "RIGHT" then
+                local x = edge == "LEFT" and -half or half
+                seam:SetPoint("TOP", frame, "TOP" .. edge, x, 0)
+                seam:SetPoint("BOTTOM", frame, "BOTTOM" .. edge, x, 0)
+                seam:SetWidth(2 * reach)
+                seam.line:SetPoint("TOP"); seam.line:SetPoint("BOTTOM"); seam.line:SetWidth(2)
+            else
+                local y = edge == "BOTTOM" and -half or half
+                seam:SetPoint("LEFT", frame, edge .. "LEFT", 0, y)
+                seam:SetPoint("RIGHT", frame, edge .. "RIGHT", 0, y)
+                seam:SetHeight(2 * reach)
+                seam.line:SetPoint("LEFT"); seam.line:SetPoint("RIGHT"); seam.line:SetHeight(2)
+            end
+            seam:Show()
+        elseif frame and rawget(frame, "seam") then
+            frame.seam:Hide()
+        end
+    end
+end
+
+local function ShowDockLines(group)
+    HideDockLines()
+    for _, other in ipairs(AllGroups()) do
+        local frame = state.frames[other]
+        local target = DockTarget(other)
+        if frame and frame:IsShown() and target and (other == group or target == group) then DockLine(frame, other.dock.side) end
+    end
 end
 
 
@@ -493,5 +696,24 @@ ns.DockFrame = DockFrame
 ns.FinishDrag = FinishDrag
 ns.LayoutOf = LayoutOf
 ns.PlaceGroups = PlaceGroups
+ns.ShowDockLines = ShowDockLines
+ns.UpdateSeams = UpdateSeams
+ns.Settle = Settle
+
+-- Lets a sack go: it stays exactly where it is on screen, now at a spot of its own.
+function ns.Undock(group)
+    local frame = state.frames[group]
+    local box = frame and Rect(frame)
+    if box then
+        local corner = group.anchor or DEFAULT_ANCHOR
+        local at = POINT_FRACTION[corner]
+        group.point, group.relPoint, group.relativeTo = corner, "BOTTOMLEFT", nil
+        group.x = box.left + at.x * (box.right - box.left)
+        group.y = box.bottom + at.y * (box.top - box.bottom)
+    end
+    group.dock, group.touches = nil, nil
+    if state.refresh then state.refresh() end
+end
+ns.HideDockLines = HideDockLines
 ns.DockWords = DockWords
 ns.PlaceOne = PlaceOne

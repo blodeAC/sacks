@@ -146,8 +146,13 @@ local function MakeGroupFrame(group)
         end
         GameTooltip:AddLine("Right-click: this sack's settings", 0.5, 0.8, 1)
         GameTooltip:Show()
+        if ns.ShowDockLines then ns.ShowDockLines(group) end -- its docks, as gold lines in the gaps
     end)
-    frame.handle:SetScript("OnLeave", function() GameTooltip:Hide(); ns.LetGo() end)
+    frame.handle:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+        if ns.HideDockLines then ns.HideDockLines() end
+        ns.LetGo()
+    end)
     frame.handle:HookScript("OnEnter", function() ns.HoldStill() end)
     frame.blank = CreateFrame("Frame", nil, frame)
     frame.blank:SetSize(SlotSize(), SlotSize())
@@ -404,6 +409,7 @@ local function UpdateMoney(place)
     if place and not DockFrame() then
         frame:ClearAllPoints()
         PlaceOne(group, frame)
+        if not state.placing and not state.holding then ns.Settle() end -- what hangs from it may need settling again (not while the sacks hold still)
     end
     frame:Show()
 end
@@ -466,9 +472,10 @@ local function UpdateWidget(free, special)
     frame.text:SetText(free)
     if free > 0 then frame.text:SetTextColor(Rgb(COLOR.GOLD)) else frame.text:SetTextColor(Rgb(COLOR.RED)) end
     frame.extra:SetText(special > 0 and ("+" .. special) or "")
-    if not DockFrame() then
+    if not DockFrame() and not state.holding then
         frame:ClearAllPoints()
         PlaceOne(group, frame)
+        if not state.placing and not state.holding then ns.Settle() end -- what hangs from it may need settling again (not while the sacks hold still)
     end
     frame:Show()
 end
@@ -557,9 +564,12 @@ local function Refresh()
         state.placed = state.placed + #sorted[group]
         FillGroup(group, sorted[group], free, special)
     end
+    state.placing = true
     PlaceGroups()
     UpdateWidget(free, special)
     UpdateMoney(true)
+    state.placing = false
+    ns.Settle() -- after the boxes too: a chain of sacks can hang from the gold box
     RefreshFresh()
     if ns.RefreshSettings then Guarded("settings", ns.RefreshSettings) end
 end

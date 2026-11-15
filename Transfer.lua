@@ -222,7 +222,7 @@ end
 
 local TYPES = { name = "string", point = "string", relPoint = "string", x = "number", y = "number", anchor = "string", flow = "string",
     title = "string", titleText = "string", cols = "number", blank = "string", reverse = "boolean", useOnClick = "boolean",
-    always = "boolean", hideEmpty = "boolean", shown = "boolean" }
+    always = "boolean", hideEmpty = "boolean", shown = "boolean", gravity = "boolean" }
 
 -- A sack (or Other, or the free-slots box). Never copied across: fixed, builtin and relativeTo, which the add-on decides itself.
 local function CleanGroup(source, what)
