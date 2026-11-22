@@ -64,21 +64,66 @@ local function RefreshQuestMarks()
 end
 ns.RefreshQuestMarks = RefreshQuestMarks
 
+-- The spell an item casts when used (remembered once known: it never changes for an item; not remembered while the
+-- game has not loaded the item's data yet).
+local itemSpell = {}
+local function ItemSpellID(itemID)
+    if not itemSpell[itemID] then
+        local get = (C_Item and C_Item.GetItemSpell) or GetItemSpell
+        local spellID
+        if get then spellID = select(2, get(itemID)) end
+        itemSpell[itemID] = spellID
+    end
+    return itemSpell[itemID]
+end
+
+-- The cooldown of the spell an item casts, when it is running and is not just the global cooldown. Its start and
+-- duration can be secret values (when the game restricts cooldowns): never compared or added here, so only the
+-- never-secret flags decide anything.
+local function SpellCooldownOf(itemID)
+    local spellID = itemID and ItemSpellID(itemID)
+    if not (spellID and C_Spell and C_Spell.GetSpellCooldown) then return end
+    local info = C_Spell.GetSpellCooldown(spellID)
+    if info and info.isActive and not info.isOnGCD then return info end
+end
+
+-- A slot's cooldown. The game's bags ask only GetContainerItemCooldown, but on Forever that can be shorter than the
+-- real one: Student Fodder showed 5 minutes while the game's own tooltip and its spell (Trail Snack) said 10 min 21 sec
+-- (the spell's cooldown is the 30 minutes the item really has). So while the item's spell has a cooldown running (not
+-- just the global one), that is what the slot shows; otherwise the bag's own.
 local function UpdateCooldown(button)
     local cooldown = button.cooldown
     if not cooldown then return end
-    local get = (C_Container and C_Container.GetContainerItemCooldown) or GetContainerItemCooldown
-    local start, duration, enable = 0, 0, 0
-    if button.bag and get then start, duration, enable = get(button.bag, button.slot) end
-    if CooldownFrame_Set then
-        CooldownFrame_Set(cooldown, start or 0, duration or 0, enable)
-    elseif (duration or 0) > 0 then
-        cooldown:SetCooldown(start, duration)
+    local waiting
+    local spell = SpellCooldownOf(button.itemID)
+    -- Secret numbers may not be handed to SetCooldown from addon code (in a group, in combat, the game restricts
+    -- cooldowns). The way the game provides: a duration object for the spell's cooldown, which the widget takes as is.
+    local durationObject = spell and C_Spell.GetSpellCooldownDuration and cooldown.SetCooldownFromDurationObject
+        and C_Spell.GetSpellCooldownDuration(ItemSpellID(button.itemID), true)
+    local secret = spell and issecretvalue and (issecretvalue(spell.startTime) or issecretvalue(spell.duration))
+    if spell and (durationObject or not secret) then
+        cooldown:SetDrawEdge(false)
+        if durationObject then
+            cooldown:SetCooldownFromDurationObject(durationObject)
+        else
+            cooldown:SetCooldown(spell.startTime, spell.duration, spell.modRate)
+        end
+        waiting = not spell.isEnabled
     else
-        cooldown:SetCooldown(0, 0)
+        local get = (C_Container and C_Container.GetContainerItemCooldown) or GetContainerItemCooldown
+        local start, duration, enable = 0, 0, 0
+        if button.bag and get then start, duration, enable = get(button.bag, button.slot) end
+        start, duration = start or 0, duration or 0
+        if CooldownFrame_Set then
+            CooldownFrame_Set(cooldown, start, duration, enable)
+        elseif duration > 0 then
+            cooldown:SetCooldown(start, duration)
+        else
+            cooldown:SetCooldown(0, 0)
+        end
+        waiting = duration > 0 and (enable == 0 or enable == false)
     end
     -- as the game's bags do: an item whose cooldown has not started running yet (a potion used this fight) is drawn dark
-    local waiting = (duration or 0) > 0 and (enable == 0 or enable == false)
     if button.icon then
         local shade = waiting and 0.4 or 1
         button.icon:SetVertexColor(shade, shade, shade)

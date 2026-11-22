@@ -67,6 +67,46 @@ local function BuildBagOptions(page)
     page.bagInfoTop = y
 end
 
+-- The Town layout: switching to it here, its button, and which windows bring it out by themselves.
+local TOWN_SHOW, NORMAL_SHOW = "Show Town sacks", "Show Normal sacks"
+local function BuildTown(page)
+    local box = CreateFrame("Frame", nil, page)
+    page.town = box
+    local y = SectionTitle(box, "Town", "a second layout of sacks, for selling, posting and muling")
+    page.townToggle = MakeButton(box, TOWN_SHOW, ns.ButtonWidth({ TOWN_SHOW, NORMAL_SHOW }), function() ns.ToggleTown() end)
+    page.townToggle:SetPoint("TOPLEFT", 0, -y)
+    page.townShowing = MakeText(box, "GameFontHighlight", "TOPLEFT", 0, 0)
+    page.townShowing:ClearAllPoints()
+    page.townShowing:SetPoint("LEFT", page.townToggle, "RIGHT", PADDING * 2, 0)
+    y = y + BUTTON_HEIGHT + PADDING
+    page.townButtonCheck = MakeCheck(box, "Show the Town button I can place anywhere", function(self)
+        ns.TownButtonPlace().shown = self:GetChecked() and true or false
+        ns.UpdateTownButton()
+    end)
+    page.townButtonCheck:SetPoint("TOPLEFT", -SLOT_GAP, -y)
+    local reset = MakeButton(box, "Reset its position", nil, function() ns.ResetTownButton() end)
+    reset:SetPoint("LEFT", page.townButtonCheck.label, "RIGHT", PADDING * 2, 0)
+    y = y + CHECK_SIZE + SLOT_GAP
+    local lead = "Show Town by itself while open:"
+    MakeText(box, "GameFontHighlight", "TOPLEFT", 0, -(y + (CHECK_SIZE - LABEL_HEIGHT) / 2)):SetText(lead)
+    page.townChecks = {}
+    local x = math.ceil(TextWidth(lead, "GameFontHighlight")) + PADDING
+    for _, place in ipairs(ns.TOWN_PLACES) do
+        local label = place.label:gsub("^%l", string.upper)
+        local check = MakeCheck(box, label, function(self) ns.SetTownAt(place.key, self:GetChecked()) end)
+        check:SetPoint("TOPLEFT", x, -y)
+        check.key = place.key
+        page.townChecks[#page.townChecks + 1] = check
+        x = x + CHECK_SIZE + 2 + math.ceil(TextWidth(label, "GameFontHighlight")) + PADDING * 2
+    end
+    y = y + CHECK_SIZE + SLOT_GAP
+    MakeText(box, "GameFontDisableSmall", "TOPLEFT", 0, -y):SetText(
+        "The sack list and every sack's page edit the layout that is showing: show Town to set up its sacks.")
+    y = y + LABEL_HEIGHT + PADDING
+    page.townHeight = y
+    box:SetSize(FULL, y)
+end
+
 -- Your sacks as text to keep or share, a way back from the last reset or import, and the reset itself.
 local function BuildBackup(page)
     local box = CreateFrame("Frame", nil, page)
@@ -80,7 +120,8 @@ local function BuildBackup(page)
     page.undoButton:SetPoint("LEFT", import, "RIGHT", PADDING, 0)
     -- at the far right, away from the everyday buttons; it asks before it does anything
     page.resetButton = MakeButton(box, "Reset to starting sacks", nil, function()
-        ns.Confirm("Reset to the starting sacks?", "Every sack you made, and its layout, pins and order, is thrown away. Undo last reset or import brings them back.",
+        local which = ns.ShowingLayout() == "town" and "Town" or "Normal"
+        ns.Confirm("Reset the " .. which .. " sacks to their starting sacks?", "Every " .. which .. " sack you made, and its layout, pins and order, is thrown away. Undo last reset or import brings them back.",
             "Reset", function()
                 ns.BackupSacks()
                 for _, group in ipairs(SacksDB.groups) do HideRemoved(group) end
@@ -97,6 +138,7 @@ local function BuildSettingsPage(window)
     local page = CreateFrame("Frame", nil, window)
     page:SetSize(FULL, 100)
     BuildBagOptions(page)
+    BuildTown(page)
     BuildBackup(page)
     page.height = 100
     return page
@@ -140,6 +182,14 @@ local function RefreshSettingsPage()
     page.bagInfo:SetText(table.concat(lines, "\n"))
     local y = page.bagInfoTop + #lines * LABEL_HEIGHT + 2 * PADDING
     page.bags:SetHeight(y)
+    local town = ns.ShowingLayout() == "town"
+    page.townToggle:SetText(town and NORMAL_SHOW or TOWN_SHOW)
+    page.townShowing:SetText(town and "Town sacks are showing" or "Normal sacks are showing")
+    page.townButtonCheck:SetChecked(ns.TownButtonPlace().shown and true or false)
+    for _, check in ipairs(page.townChecks) do check:SetChecked(ns.TownAt(check.key)) end
+    page.town:ClearAllPoints()
+    page.town:SetPoint("TOPLEFT", 0, -y)
+    y = y + page.townHeight
     page.backup:ClearAllPoints()
     page.backup:SetPoint("TOPLEFT", 0, -y)
     if SacksDB.backup then page.undoButton:Enable() else page.undoButton:Disable() end

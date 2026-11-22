@@ -1,8 +1,9 @@
 ## Interface: 16001
 ## Title: sacks
 ## Notes: Bag items as small pinned groups
-## Version: 0.0.55
+## Version: 0.0.56
 ## SavedVariables: SacksDB
+## OptionalDeps: Blackthornes_Butler
 Shared.lua
 Bags.lua
 Rules.lua
@@ -14,6 +15,7 @@ Placement.lua
 Combat.lua
 Sacks.lua
 GameBags.lua
+Town.lua
 Commands.lua
 Debug.lua
 Widgets.lua

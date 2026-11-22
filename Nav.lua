@@ -39,7 +39,7 @@ local function NavWidth()
     for _, group in ipairs(AllGroups()) do name = math.max(name, math.ceil(TextWidth(group.name, "GameFontHighlight"))) end
     name = math.min(name, NAME_WIDTH)
     local width = GRIP_WIDTH + name + PADDING + COUNT_WIDTH + SLOT_GAP + BAR_ROOM
-    local header = math.ceil(TextWidth("Sacks", "GameFontNormal") + PADDING + TextWidth(LIST_HINT, "GameFontDisableSmall"))
+    local header = math.ceil(TextWidth("Town sacks", "GameFontNormal") + PADDING + TextWidth(LIST_HINT, "GameFontDisableSmall"))
     for _, text in ipairs({ "All items", "Defaults", "Settings" }) do
         width = math.max(width, PADDING + math.ceil(TextWidth(text, "GameFontHighlight")) + PADDING)
     end
@@ -315,6 +315,7 @@ local function RefreshNav()
         y = y + ROW_HEIGHT
     end
     y = y + PADDING
+    nav.title:SetText(SacksDB.layout == "town" and "Town sacks" or "Sacks")
     nav.title:ClearAllPoints()
     nav.title:SetPoint("TOPLEFT", 0, -y)
     nav.hint:ClearAllPoints()

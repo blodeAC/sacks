@@ -103,7 +103,8 @@ local HELP = {
     "/sacks bags - open or close the game's own bags",
     "/sacks errors - the last errors this add-on raised (kept across reloads). /sacks errors clear empties it.",
     "/sacks counts - record bag/cast events and the counts the game reports (show, clear). For finding out why a count lags in combat.",
-    "/sacks reset - back to the starting sacks",
+    "/sacks reset - back to the starting sacks (of the layout showing: Normal or Town)",
+    "/sacks town - switch between the Normal and Town layouts (/sacks town on, /sacks town off)",
     "Drag a sack by its title bar to move it.",
 }
 
@@ -186,6 +187,13 @@ function commands.errors(args)
 end
 
 function commands.bags() ToggleOwnBags() end
+
+function commands.town(args)
+    local word = (args[1] or ""):lower()
+    if word == "on" then ns.ForceLayout("town")
+    elseif word == "off" then ns.ForceLayout("normal")
+    else ns.ToggleTown() end
+end
 
 function commands.probe()
     local ok, lines = pcall(ProbeLines)

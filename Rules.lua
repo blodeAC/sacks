@@ -97,6 +97,8 @@ local STATS = {
     reagent = { text = "crafting reagent", kind = "pick", get = function(item) return item.reagent end },
     bound = { text = "soulbound", kind = "pick", get = function(item) return item.bound end },
     family = { text = "special bag type", kind = "pick", get = function(item) return item.family end },
+    -- What Blackthornes Butler says to do with the item in that bag slot (Town.lua asks it, fresh each rebuild).
+    butler = { text = "Butler says", kind = "pick", get = function(item) return ns.ButlerVerdict and ns.ButlerVerdict(item) end },
 }
 local Stat = {}
 -- Which special bags take an item: the game's bag family bits (an item can fit more than one).
@@ -159,6 +161,8 @@ function Stat.Options(field)
         for _, entry in ipairs(BIND_TYPES) do options[#options + 1] = { label = entry[2], value = entry[1] } end
     elseif field == "family" then
         for _, entry in ipairs(Stat.families) do options[#options + 1] = { label = entry[2], value = entry[1] } end
+    elseif field == "butler" then
+        options = ns.ButlerOptions and ns.ButlerOptions() or {}
     else
         options = { { label = "Yes", value = 1 }, { label = "No", value = 0 } }
     end
@@ -174,7 +178,9 @@ local function RuleFields()
         { label = "Equip slot", value = "equip" }, { label = "Bind type", value = "bind" },
         { label = "Soulbound", value = "bound" }, { label = "Crafting reagent", value = "reagent" },
         { label = "Sell price", value = "price" }, { label = "Stack size", value = "stack" },
-        { label = "Special bag type", value = "family" } }
+        { label = "Special bag type", value = "family" },
+        -- only offered while Blackthornes Butler is loaded: without it the line can never match
+        rawget(_G, "BlackthornesButler") and { label = "Butler says", value = "butler" } or nil }
 end
 
 local function ConditionMatches(condition, item)
@@ -359,6 +365,8 @@ local SACK_COLUMN_X = -300 -- the starting sacks sit in one column this far left
 
 -- Starting sacks, built from the game's own enums. The first sack that matches an item gets it.
 local function DefaultGroups()
+    -- the Town layout starts with its own sacks (Town.lua)
+    if SacksDB and SacksDB.layout == "town" and ns.TownGroups then return ns.TownGroups() end
     local groups = {}
     local function add(name, rule, x, y)
         groups[#groups + 1] = { name = name, rule = rule, point = "CENTER", x = x, y = y }
