@@ -67,6 +67,107 @@ local function BuildBagOptions(page)
     page.bagInfoTop = y
 end
 
+-- How the Town sacks line up beside a vendor, mailbox, auction house or bank window: each choice where there is more
+-- than one sensible way, as a labelled row.
+local TOWN_ARRANGE = {
+    { label = "Narrowest, the first sack top left", value = "narrow" },
+    { label = "In my sack-list order", value = "list" },
+}
+local TOWN_HEIGHT = {
+    { label = "The window", value = "window" },
+    { label = "Down to the bottom of the screen", value = "screen" },
+}
+local TOWN_EMPTY = {
+    { label = "Fill the room left at the edges", value = "fill" },
+    { label = "Hidden", value = "hide" },
+    { label = "Arranged like the rest", value = "pack" },
+}
+local TOWN_SORT = {
+    { label = "The order the Normal sacks put them in", value = "normal" },
+    { label = "Each sack's own order", value = "own" },
+}
+local BUTLER_FIRST = "\0butler" -- the first sack choice that means "the one Butler fills for this place"
+
+-- The Town sacks, whichever layout is showing (for the first-sack choices).
+local function TownSacks()
+    local groups, fallback
+    if ns.ShowingLayout() == "town" then
+        groups, fallback = SacksDB.groups, SacksDB.fallback
+    elseif SacksDB.otherLayout and SacksDB.otherLayout.groups then
+        groups, fallback = SacksDB.otherLayout.groups, SacksDB.otherLayout.fallback
+    else
+        groups = ns.TownGroups()
+    end
+    local list = {}
+    for _, group in ipairs(groups or {}) do list[#list + 1] = group end
+    if fallback then list[#list + 1] = fallback end
+    return list
+end
+
+local function FirstOptions(place)
+    local verdict = ns.TOWN_FIRST_VERDICT[place]
+    local label = verdict
+    for _, option in ipairs(ns.ButlerOptions()) do
+        if option.value == verdict then label = option.label end
+    end
+    local options = { { label = "The sack Butler fills with " .. label, value = BUTLER_FIRST } }
+    for _, group in ipairs(TownSacks()) do
+        if group.name and group.name ~= "" then options[#options + 1] = { label = group.name, value = group.name } end
+    end
+    options[#options + 1] = { label = "None", value = "" }
+    return options
+end
+
+local function BuildTownBeside(page, box, y)
+    local rows = {
+        { text = "Beside a window, arrange them:", options = function() return TOWN_ARRANGE end, key = "townOrder" },
+        { text = "Columns as tall as:", options = function() return TOWN_HEIGHT end, key = "townHeight" },
+        { text = "Empty sacks:", options = function() return TOWN_EMPTY end, key = "townEmpty" },
+        { text = "Items inside each sack:", options = function() return TOWN_SORT end, key = "townSort" },
+    }
+    for _, place in ipairs(ns.TOWN_PLACES) do
+        rows[#rows + 1] = { text = "First sack at " .. place.label .. ":", options = function() return FirstOptions(place.key) end,
+            place = place.key }
+    end
+    local labelWidth = 0
+    for _, row in ipairs(rows) do labelWidth = math.max(labelWidth, math.ceil(TextWidth(row.text, "GameFontHighlight"))) end
+    page.townRows = {}
+    for _, row in ipairs(rows) do
+        MakeText(box, "GameFontHighlight", "TOPLEFT", 0, -(y + (BUTTON_HEIGHT - LABEL_HEIGHT) / 2)):SetText(row.text)
+        local choice
+        choice = MakeChoice(box, nil, labelWidth + PADDING, -y, row.options, function()
+            local value = choice.value()
+            if row.place then
+                SacksDB.townFirst = SacksDB.townFirst or {}
+                if value == BUTLER_FIRST then value = nil end
+                SacksDB.townFirst[row.place] = value
+            else
+                SacksDB[row.key] = value
+            end
+            Refresh()
+        end)
+        choice.fit()
+        choice.row = row
+        page.townRows[#page.townRows + 1] = choice
+        y = y + BUTTON_HEIGHT + SLOT_GAP
+    end
+    return y + PADDING
+end
+
+-- Shows the saved Town choices in their rows (the first-sack lists also follow renamed and new sacks).
+local function RefreshTownRows(page)
+    for _, choice in ipairs(page.townRows or {}) do
+        local row = choice.row
+        if row.place then
+            local chosen = SacksDB.townFirst and SacksDB.townFirst[row.place]
+            choice.fit()
+            choice.select(chosen == nil and BUTLER_FIRST or chosen)
+        else
+            choice.select(SacksDB[row.key] or row.options()[1].value)
+        end
+    end
+end
+
 -- The Town layout: switching to it here, its button, and which windows bring it out by themselves.
 local TOWN_SHOW, NORMAL_SHOW = "Show Town sacks", "Show Normal sacks"
 local function BuildTown(page)
@@ -100,6 +201,7 @@ local function BuildTown(page)
         x = x + CHECK_SIZE + 2 + math.ceil(TextWidth(label, "GameFontHighlight")) + PADDING * 2
     end
     y = y + CHECK_SIZE + SLOT_GAP
+    y = BuildTownBeside(page, box, y)
     MakeText(box, "GameFontDisableSmall", "TOPLEFT", 0, -y):SetText(
         "The sack list and every sack's page edit the layout that is showing: show Town to set up its sacks.")
     y = y + LABEL_HEIGHT + PADDING
@@ -187,6 +289,7 @@ local function RefreshSettingsPage()
     page.townShowing:SetText(town and "Town sacks are showing" or "Normal sacks are showing")
     page.townButtonCheck:SetChecked(ns.TownButtonPlace().shown and true or false)
     for _, check in ipairs(page.townChecks) do check:SetChecked(ns.TownAt(check.key)) end
+    RefreshTownRows(page)
     page.town:ClearAllPoints()
     page.town:SetPoint("TOPLEFT", 0, -y)
     y = y + page.townHeight

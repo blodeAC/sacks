@@ -102,4 +102,4 @@ zip="$(mktemp -d)/$ADDON_FOLDER-$tag.zip"
 git archive --format=zip --prefix="$ADDON_FOLDER/" -o "$zip" "$tag" || exit 1
 gh release create "$tag" "$zip" --title "$tag" --notes "$message" || exit 1
 rm -f "$zip"
-echo "Done: $tag. Run 'instawow update' to pick it up."
+echo "Done: $tag released."

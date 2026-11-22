@@ -182,10 +182,11 @@ end
 
 -- The windows that bring Town out, each one a setting (all on unless turned off).
 local PLACES = {
-    { key = "vendor", label = "a vendor", open = "MERCHANT_SHOW", close = "MERCHANT_CLOSED" },
-    { key = "mail", label = "a mailbox", open = "MAIL_SHOW", close = "MAIL_CLOSED" },
-    { key = "auction", label = "the auction house", open = "AUCTION_HOUSE_SHOW", close = "AUCTION_HOUSE_CLOSED" },
-    { key = "bank", label = "the bank", open = "BANKFRAME_OPENED", close = "BANKFRAME_CLOSED" },
+    { key = "vendor", label = "a vendor", open = "MERCHANT_SHOW", close = "MERCHANT_CLOSED", frame = "MerchantFrame" },
+    { key = "mail", label = "a mailbox", open = "MAIL_SHOW", close = "MAIL_CLOSED", frame = "MailFrame" },
+    { key = "auction", label = "the auction house", open = "AUCTION_HOUSE_SHOW", close = "AUCTION_HOUSE_CLOSED",
+        frame = "AuctionHouseFrame" },
+    { key = "bank", label = "the bank", open = "BANKFRAME_OPENED", close = "BANKFRAME_CLOSED", frame = "BankFrame" },
 }
 ns.TOWN_PLACES = PLACES
 
@@ -244,17 +245,54 @@ function ns.ForceLayout(layout)
     if InCombatLockdown() then ns.Say("the sacks change to " .. (layout == "town" and "Town" or "Normal") .. " when combat ends") end
 end
 
+-- The Town sacks line up beside the mailbox and auction house windows too (Placement.lua: DockFrame), so those windows
+-- opening or closing rebuild the sacks even when the layout stays the same. Once the frame is over: the auction house
+-- window is only made when it first opens.
+local function Rearrange(place)
+    if place.key ~= "mail" and place.key ~= "auction" then return end -- the vendor and bank rebuild on their own (Core.lua)
+    C_Timer.After(0, function()
+        if Showing() == "town" and not InCombatLockdown() then ns.Refresh() end
+    end)
+end
+
+-- A place closing: its close event, or its window going away. Some ways of leaving don't send the close event (the
+-- mailbox closed by opening the game's settings), so the window hiding counts too; whichever comes first does it.
+local function Closed(place)
+    if not state.open[place.key] then return end -- already closed (the event and the window both say so)
+    state.open[place.key] = nil
+    -- the vendor and bank flags the sacks line up by (Core.lua) go with it, if their close event never came
+    local stale = (place.key == "vendor" and state.vendor) or (place.key == "bank" and state.bank)
+    if place.key == "vendor" then state.vendor = false end
+    if place.key == "bank" then state.bank = false end
+    if state.override == "normal" then state.override = nil end
+    local before = Showing()
+    ns.ApplyLayout()
+    if stale and Showing() == before and not InCombatLockdown() then ns.Refresh() end
+    Rearrange(place)
+end
+
+-- Watches a place's window for going away. Only the window itself being hidden counts: hiding the whole interface
+-- (Alt+Z) hides it from view but leaves it shown, and the place is still open. The auction house window is only made
+-- when it first opens, so this runs again whenever a place opens.
+local watched = {}
+local function Watch(place)
+    local window = rawget(_G, place.frame)
+    if watched[place.key] or type(window) ~= "table" or not window.HookScript then return end
+    watched[place.key] = true
+    window:HookScript("OnHide", function(self)
+        if not self:IsShown() then Closed(place) end
+    end)
+end
+
 for _, place in ipairs(PLACES) do
     ns.OnEvent(place.open, function()
         state.open[place.key] = true
         ns.ApplyLayout()
+        Rearrange(place)
+        Watch(place)
+        C_Timer.After(0, function() Watch(place) end)
     end)
-    ns.OnEvent(place.close, function()
-        if not state.open[place.key] then return end -- the mailbox says it closed more than once
-        state.open[place.key] = nil
-        if state.override == "normal" then state.override = nil end
-        ns.ApplyLayout()
-    end)
+    ns.OnEvent(place.close, function() Closed(place) end)
 end
 
 ns.OnEvent("PLAYER_REGEN_ENABLED", function()

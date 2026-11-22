@@ -264,6 +264,7 @@ local FIELD_OPERATORS = {
     ilvl = { "=", "~=", "<", "<=", ">", ">=" }, level = { "=", "~=", "<", "<=", ">", ">=" },
     stack = { "=", "~=", "<", "<=", ">", ">=" }, price = { "=", "~=", "<", "<=", ">", ">=" },
     equip = { "=", "~=" }, bind = { "=", "~=" }, reagent = { "=" }, bound = { "=" }, family = { "=", "~=" },
+    butler = { "=", "~=" },
 }
 
 local function OperatorOptions(field)

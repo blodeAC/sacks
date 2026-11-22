@@ -519,6 +519,33 @@ local function Guarded(label, step, ...)
 end
 ns.Guarded = Guarded
 
+-- With the Town sacks showing, where the Normal sacks would put each item: which Normal sack (its place in their list)
+-- and where in it (that sack's own order). Town sacks order their items by this (a setting), so things sit in the order
+-- you know from Normal. Nil when Normal is showing, or the setting says each Town sack keeps its own order.
+local function NormalRanks(items)
+    local away = SacksDB.otherLayout
+    if SacksDB.layout ~= "town" or SacksDB.townSort == "own" or not (away and away.groups) then return nil end
+    local normal = {}
+    for _, group in ipairs(away.groups) do normal[#normal + 1] = group end
+    if away.fallback then normal[#normal + 1] = away.fallback end
+    local buckets = {}
+    for index in ipairs(normal) do buckets[index] = {} end
+    for _, item in ipairs(items) do
+        for index, group in ipairs(normal) do
+            if (group.fixed or #(group.rule or {}) > 0) and Matches(group.rule or {}, item) then
+                table.insert(buckets[index], item)
+                break
+            end
+        end
+    end
+    local ranks = {}
+    for index, group in ipairs(normal) do
+        SortItems(group, buckets[index])
+        for position, item in ipairs(buckets[index]) do ranks[item] = index * 100000 + position end
+    end
+    return ranks
+end
+
 local function Refresh()
     if not SacksDB then return end
     state.generation = (state.generation or 0) + 1 -- what was worked out from the bags before this is out of date
@@ -558,12 +585,16 @@ local function Refresh()
         end
     end
     state.placed = 0
+    state.normalRank = nil -- the Normal sacks sort by their own steps while their order is worked out
+    state.normalRank = NormalRanks(items)
     for _, group in ipairs(groups) do
         SortItems(group, sorted[group])
         state.counts[group] = #sorted[group]
         state.placed = state.placed + #sorted[group]
-        FillGroup(group, sorted[group], free, special)
     end
+    -- Town beside a window: every sack's width and spot, from what each holds, before the sacks are drawn at that width
+    ns.PackTown(groups)
+    for _, group in ipairs(groups) do FillGroup(group, sorted[group], free, special) end
     state.placing = true
     PlaceGroups()
     UpdateWidget(free, special)

@@ -4,10 +4,16 @@ local AllGroups, BlankMode, DEFAULT_ANCHOR, DEFAULT_COLUMNS = ns.AllGroups, ns.B
 local DEFAULT_FLOW, DEFAULT_TITLE, FindGroup, PADDING = ns.DEFAULT_FLOW, ns.DEFAULT_TITLE, ns.FindGroup, ns.PADDING
 local SLOT_GAP, state = ns.SLOT_GAP, ns.state
 
--- The window the sacks line up beside while it is open: the vendor's, or the bank's.
+-- The window the sacks line up beside while it is open, and which place it is: the vendor's, or the bank's; with the Town
+-- sacks showing, also the mailbox's and the auction house's.
 local function DockFrame()
-    if state.vendor and MerchantFrame then return MerchantFrame end
-    if state.bank and BankFrame then return BankFrame end
+    if state.vendor and MerchantFrame then return MerchantFrame, "vendor" end
+    if state.bank and BankFrame then return BankFrame, "bank" end
+    if SacksDB and SacksDB.layout == "town" and state.open then
+        local mail, auction = rawget(_G, "MailFrame"), rawget(_G, "AuctionHouseFrame")
+        if state.open.mail and mail then return mail, "mail" end
+        if state.open.auction and auction then return auction, "auction" end
+    end
 end
 
 -- Some windows have tabs or buttons that stick out past their right edge (the bank's chest button). The sacks go
@@ -63,9 +69,14 @@ local function SavePosition(group, frame)
     MoveToCorner(group, frame)
 end
 
--- How a sack is laid out: its own settings, also while a vendor window is open.
+-- How a sack is laid out: its own settings, also while a vendor window is open. Town sacks packed beside a window
+-- (PackTown) take the width the packing gave them, filled like a page.
 local function LayoutOf(group)
     local Default = ns.Default
+    local packed = state.pack and state.pack.cols[group]
+    if packed then
+        return { anchor = "TOPLEFT", flow = "ROWS", title = group.title or Default("title", DEFAULT_TITLE), wrap = packed }
+    end
     return { anchor = group.anchor or DEFAULT_ANCHOR, flow = group.flow or Default("flow", DEFAULT_FLOW),
         title = group.title or Default("title", DEFAULT_TITLE),
         wrap = group.cols or Default("cols", SacksDB.columns or DEFAULT_COLUMNS) }
@@ -419,6 +430,261 @@ local function ApplyGravity(all)
     end
 end
 
+-- Whether a sack is left off the screen: one with nothing at all to show (no items, no empty slot, no title), and New,
+-- which only shows while it holds something unless asked to stay. An empty sack otherwise stays (title and an empty box)
+-- so you can still see and move it.
+local function IsHidden(group)
+    if state.pack and state.pack.hidden[group] then return true end
+    local hidden = BlankMode(group) == "NONE" and group.title == "NONE" and (state.counts[group] or 0) == 0
+    if group.builtin and not group.always then hidden = true end
+    return hidden
+end
+
+---------------------------------------------------------------------------------------------------
+-- Town beside a window: every sack's width is chosen, and the sacks are arranged, so all of them take the least room
+-- across while no column of sacks is taller than the window. Worked out again at every rebuild, from what each sack holds.
+---------------------------------------------------------------------------------------------------
+
+-- The sack that goes first (top left, against the window) at each place: the one Butler fills for what you came to do.
+local FIRST_VERDICT = { vendor = "sell", mail = "mail", auction = "auction", bank = "keep" }
+-- More sacks than this with items in them are arranged in list order (trying every arrangement grows too fast).
+local MOST_ARRANGED = 11
+
+local function ButlerSackOf(group)
+    local rule = group.rule
+    if rule and #rule == 1 and rule[1].field == "butler" and rule[1].op == "=" then return rule[1].value end
+end
+
+-- The sack that goes first at a place: the one chosen in Settings (by name; "" for none), else the one Butler fills for
+-- what you came to do there.
+local function FirstSack(place, groups)
+    local chosen = SacksDB.townFirst and SacksDB.townFirst[place]
+    if chosen == "" then return nil end
+    for _, group in ipairs(groups) do
+        if chosen and group.name == chosen then return group end
+    end
+    -- nothing chosen, or the chosen sack is gone (renamed or deleted): the one Butler fills
+    for _, group in ipairs(groups) do
+        if ButlerSackOf(group) == FIRST_VERDICT[place] then return group end
+    end
+end
+ns.TownFirstSack = FirstSack
+ns.TOWN_FIRST_VERDICT = FIRST_VERDICT
+
+-- How big a sack is with this many columns (fewer when it has fewer cells): the same sums SackGeometry makes.
+local function Measure(group, cols)
+    local cells = math.max(1, (state.counts[group] or 0) + (BlankMode(group) ~= "NONE" and 1 or 0))
+    local columns = math.min(cols, cells)
+    local title = group.title or ns.Default("title", DEFAULT_TITLE)
+    local top = title == "TOP" and ns.TITLE_HEIGHT or PADDING
+    local bottom = title == "BOTTOM" and ns.TITLE_HEIGHT or PADDING
+    local width, height = ns.GridSize(columns, math.ceil(cells / columns), ns.SlotSize(), top, bottom)
+    return width, height, cells
+end
+
+-- One column of sacks given one width: each sack as wide as that (or its cells), so as short as it can be. Its width
+-- in pixels and its height.
+local function StackSize(members, cols)
+    local width, height = 0, -SLOT_GAP
+    for _, group in ipairs(members) do
+        local w, h = Measure(group, cols)
+        width = math.max(width, w)
+        height = height + h + SLOT_GAP
+    end
+    return width, height
+end
+
+-- The narrowest a column of these sacks can be and still fit in the height: its column count and width in pixels.
+-- A lone sack too tall even at its widest still gets a column (at its widest); several that can't fit get none.
+local function NarrowestStack(members, limit)
+    local most = 1
+    for _, group in ipairs(members) do
+        local _, _, cells = Measure(group, 1)
+        most = math.max(most, cells)
+    end
+    local low, high = 1, most
+    if select(2, StackSize(members, high)) > limit then
+        if #members > 1 then return nil end
+        return high, (StackSize(members, high))
+    end
+    while low < high do -- heights only fall as the width grows
+        local mid = math.floor((low + high) / 2)
+        if select(2, StackSize(members, mid)) <= limit then high = mid else low = mid + 1 end
+    end
+    return low, (StackSize(members, low))
+end
+
+-- Columns of sacks in list order: the split of the list into runs that takes the least room across.
+local function ArrangeInOrder(full, limit)
+    local n = #full
+    local best = { [0] = { width = 0, count = 0 } }
+    for i = 1, n do
+        for j = 1, i do
+            local before = best[j - 1]
+            if before then
+                local members = {}
+                for k = j, i do members[#members + 1] = full[k] end
+                local cols, width = NarrowestStack(members, limit)
+                if cols then
+                    local total = before.width + width + (j > 1 and SLOT_GAP or 0)
+                    local mine = best[i]
+                    if not mine or total < mine.width or (total == mine.width and before.count + 1 < mine.count) then
+                        best[i] = { width = total, count = before.count + 1, from = j, cols = cols, prev = j - 1 }
+                    end
+                end
+            end
+        end
+    end
+    local stacks, at = {}, n
+    while at > 0 do
+        local step = best[at]
+        local members = {}
+        for k = step.from, at do members[#members + 1] = full[k] end
+        table.insert(stacks, 1, { members = members, cols = step.cols })
+        at = step.prev
+    end
+    return stacks
+end
+
+-- Columns of sacks in any arrangement: every way of grouping them is tried (a sack's column is a set of sacks), the one
+-- that takes the least room across wins, fewer columns breaking a tie.
+local function ArrangeFreely(full, limit)
+    local n = #full
+    local band, bor = bit.band, bit.bor
+    local all = 2 ^ n - 1
+    local stackOf = {} -- [set] = { cols, width } or false
+    local function Stack(set)
+        local known = stackOf[set]
+        if known ~= nil then return known end
+        local members = {}
+        for i = 1, n do
+            if band(set, 2 ^ (i - 1)) ~= 0 then members[#members + 1] = full[i] end
+        end
+        local cols, width = NarrowestStack(members, limit)
+        stackOf[set] = cols and { cols = cols, width = width } or false
+        return stackOf[set]
+    end
+    local best = { [0] = { width = 0, count = 0 } }
+    local function Solve(rest)
+        if best[rest] then return best[rest] end
+        local low = band(rest, -rest)
+        local mine = { width = math.huge, count = math.huge }
+        local set = rest
+        while set > 0 do
+            if band(set, low) ~= 0 then
+                local stack = Stack(set)
+                if stack then
+                    local after = Solve(rest - set)
+                    local total = stack.width + after.width + (after.count > 0 and SLOT_GAP or 0)
+                    if total < mine.width or (total == mine.width and after.count + 1 < mine.count) then
+                        mine = { width = total, count = after.count + 1, set = set, cols = stack.cols }
+                    end
+                end
+            end
+            set = band(set - 1, rest)
+        end
+        best[rest] = mine
+        return mine
+    end
+    Solve(all)
+    local stacks, rest = {}, all
+    while rest > 0 do
+        local step = best[rest]
+        local members = {}
+        for i = 1, n do
+            if band(step.set, 2 ^ (i - 1)) ~= 0 then members[#members + 1] = full[i] end
+        end
+        stacks[#stacks + 1] = { members = members, cols = step.cols, first = members[1] and members[1].packIndex }
+        rest = rest - step.set
+    end
+    return stacks
+end
+
+-- Works out state.pack for the rebuild: each sack's columns (LayoutOf reads them) and its spot beside the window
+-- (PlaceGroups puts it there). Nil when the Town sacks are not beside a window.
+local function PackTown(groups)
+    state.pack = nil
+    local window, place = DockFrame()
+    if not (window and SacksDB.layout == "town") then return end
+    -- How tall a column may be: the window's height, or (a setting) down to the bottom of the screen.
+    local limit = tonumber(window:GetHeight()) or 0
+    if SacksDB.townHeight == "screen" then
+        local top, scale, screen = window:GetTop(), window:GetEffectiveScale(), UIParent:GetEffectiveScale()
+        if type(top) == "number" and type(scale) == "number" and screen and screen > 0 then limit = top * scale / screen end
+    end
+    if limit <= 0 then return end
+    -- Empty sacks (a setting): fill the room left at the edges, are hidden, or are arranged like the rest.
+    local emptyMode = SacksDB.townEmpty or "fill"
+    local full, empty, hidden = {}, {}, {}
+    for index, group in ipairs(groups) do
+        if not IsHidden(group) then
+            group.packIndex = index
+            local cells = (state.counts[group] or 0) + (BlankMode(group) ~= "NONE" and 1 or 0)
+            if cells > 0 or emptyMode == "pack" then
+                full[#full + 1] = group
+            elseif emptyMode == "hide" then
+                hidden[group] = true
+            else
+                empty[#empty + 1] = group
+            end
+        end
+    end
+    -- the sack for what you came to do goes first: top of the first column
+    local first = FirstSack(place, full)
+    local stacks
+    if SacksDB.townOrder == "list" or #full > MOST_ARRANGED then
+        stacks = ArrangeInOrder(full, limit)
+    else
+        stacks = ArrangeFreely(full, limit)
+        for _, stack in ipairs(stacks) do
+            table.sort(stack.members, function(a, b)
+                if a == first or b == first then return a == first end
+                return a.packIndex < b.packIndex
+            end)
+            stack.lead = stack.members[1] == first and 0 or stack.members[1].packIndex
+        end
+        table.sort(stacks, function(a, b) return a.lead < b.lead end)
+    end
+    local pack = { cols = {}, spots = {}, hidden = hidden }
+    local x, columns = 0, {}
+    for _, stack in ipairs(stacks) do
+        local y, width = 0, 0
+        for _, group in ipairs(stack.members) do
+            local w, h = Measure(group, stack.cols)
+            pack.cols[group] = stack.cols
+            pack.spots[group] = { x = x, y = y }
+            y = y + h + SLOT_GAP
+            width = math.max(width, w)
+        end
+        columns[#columns + 1] = { x = x, y = y, width = width }
+        x = x + width + SLOT_GAP
+    end
+    -- Empty sacks fill the room left at the bottom of the columns, the outermost column first; what doesn't fit starts a
+    -- column of its own at the far edge.
+    for _, group in ipairs(empty) do
+        local w, h = Measure(group, 1)
+        pack.cols[group] = 1
+        local spot
+        for i = #columns, 1, -1 do
+            local column = columns[i]
+            if column.y + h <= limit then
+                spot = column
+                break
+            end
+        end
+        if not spot then
+            spot = { x = x, y = 0, width = w }
+            columns[#columns + 1] = spot
+            x = x + w + SLOT_GAP
+        end
+        pack.spots[group] = { x = spot.x, y = spot.y }
+        spot.y = spot.y + h + SLOT_GAP
+        spot.width = math.max(spot.width, w)
+    end
+    state.pack = pack
+end
+ns.PackTown = PackTown
+
 local function PlaceGroups()
     local groups = AllGroups()
     -- Every anchor is dropped first. A sack that was stacked at a vendor is anchored to another sack, and putting
@@ -454,11 +720,11 @@ local function PlaceGroups()
     end
     for _, group in ipairs(groups) do
         local frame = state.frames[group]
-        -- An empty sack stays on screen (title and an empty box) so you can still see and move it; only a sack with
-        -- nothing at all to show (no items, no empty slot, no title) goes away.
-        local hidden = BlankMode(group) == "NONE" and group.title == "NONE" and (state.counts[group] or 0) == 0
-        if group.builtin and not group.always then hidden = true end -- New: only while it holds something, unless asked to stay
-        if vendor then
+        local hidden = IsHidden(group)
+        local packed = state.pack and state.pack.spots[group]
+        if vendor and packed then
+            if not hidden then frame:SetPoint("TOPLEFT", vendor, "TOPRIGHT", PADDING + overhang + packed.x, -packed.y) end
+        elseif vendor then
             -- Beside the vendor (or bank) window, in sack-list order, filling downward to the window's height. A box that no
             -- longer fits below goes into free space beside the narrower boxes, or into a new column.
             if not hidden then

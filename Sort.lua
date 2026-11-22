@@ -96,9 +96,15 @@ local function SortItems(group, items)
         local id = item.itemID or 0
         if not first[id] or place < first[id] then first[id] = place end
     end
+    -- Town sacks (a setting): after the pins, the order the Normal sacks would put the items in (see NormalRanks).
+    local normal = ns.state.normalRank
     table.sort(items, function(a, b)
         local rankA, rankB = rank[a.itemID] or math.huge, rank[b.itemID] or math.huge
         if rankA ~= rankB then return rankA < rankB end
+        if normal then
+            local normalA, normalB = normal[a] or math.huge, normal[b] or math.huge
+            if normalA ~= normalB then return normalA < normalB end
+        end
         for _, spec in ipairs(keys) do
             local key = SORT_KEYS[spec.key]
             if spec.key == "match" then
