@@ -17,15 +17,14 @@ or copy this folder to `World of Warcraft/_forever_/Interface/AddOns/sacks`.
 ## Using it
 
 - Click the bag icon on the minimap edge, or type `/sacks`, to open the settings window.
-- Right-click an item to use it. With a vendor, bank, guild bank, trade window, mailbox or auction house open it does what the game's own bags do instead: sells it (not on the vendor's Buyback tab, and asking first for an item that can still be refunded), banks, trades or attaches it, or puts it up for auction. An item is never used or equipped while one of those windows is open.
-- With something on the cursor (an item, money, an item you are buying), clicking a slot puts it there, as in the game's bags, even in a sack that uses items on left click.
-- As in the game's bags: a locked item (on the cursor, in a trade, on a letter) is drawn grey, an item whose cooldown hasn't started yet is drawn dark, and grey junk shows a coin while a vendor is open.
+- Every slot is one of the game's own bag slots (the squares of the default bags), pointed at where the item is. Clicking, dragging, hovering and modified clicks do exactly what they do in the game's bags: right-click uses, sells, banks, trades, attaches or posts; left-click and drag pick up, put down and swap; shift-click splits or links; a crate waiting for an item takes the one you click, and what it can't take is greyed. Quality border, count, quest marker, junk coin, new-item glow, cooldown and the grey of a locked item are the game's own drawing too, and the game's bag search dims what doesn't match. This works in combat as well.
+- The cooldown shown is the item's spell's when that one runs longer than the bag's (Student Fodder).
 - Right-click a sack's title to open it in the settings window. Hovering the title says what the sack is docked to.
 - Drag a sack by its title bar to move it. Dropped flush against another sack, it docks to it and follows it; dropped against two (in a corner), it docks to one and keeps to its side of the other. A sack that grows into one beside it pushes that one aside, and it comes back when there is room. Edges snap to the screen and to other sacks (hold Alt for a free drag). A sack dropped against another one stays docked to it when either changes size.
 - `B` and the bag buttons still open the game's own bags. The option on the Settings page stops the game opening them by itself (vendors and so on).
 - At a vendor or the bank, the sacks stack beside that window and fill gaps beside narrower sacks. Each is laid out like a page from the top left, with the items in the same reading order as normal, then goes back to its own corner and flow afterwards. Right-click sells there, as in the game's bags.
 - The Town sacks line up beside the vendor, bank, mailbox or auction house window, taking as little room across as possible: every sack's width is worked out again from what it holds, and the sacks are arranged in whatever columns are narrowest, no column taller than the window. The sack for what you came to do goes top left (Sell at a vendor, Mail at the mailbox, Auction at the auction house, Keep at the bank), and empty sacks fill the room left at the edges. Inside each Town sack the items keep the order the Normal sacks would put them in. Each of these is a choice on the Settings page (Town): list order instead of narrowest, columns down to the bottom of the screen, empty sacks hidden or arranged like the rest, each sack's own order, and which sack goes first at each place.
-- A sack can use its items on left click, like an action bar (the "Left-click uses the items" box at the top of the sack's page). Hold and drag to move an item. At a vendor left click just picks the item up. Such sacks are marked with a coloured title and border, and their name in the list is in that colour; the colour (or no marking) is chosen on the Settings page.
+- A sack can use its items on left click, like an action bar (the "Left-click uses the items" box at the top of the sack's page): a secure "use item" layer sits over its slots. Hold and drag to move an item. With something on the cursor, a vendor, bank, mailbox, trade or auction window open, or a modified click, the left click is the game's own instead (pick up, put down, split, link). Such sacks are marked with a coloured title and border, and their name in the list is in that colour; the colour (or no marking) is chosen on the Settings page.
 - On a sack's page, "Copy layout from" (Looks) copies another sack's corner, fill direction, title position, slots per row, title text, and "Copy order from" (Order) copies its sort steps. Neither copies the rule, pins or position.
 
 ## Settings window
@@ -67,6 +66,14 @@ Tick **Falls to the bottom** on a sack's page and it drops straight down until i
 ## Holding still
 
 While the mouse is on a sack, the sacks hold still. Selling, banking or using items leaves their slots where they are, dimmed and inert, so the next item under your cursor stays put. New items show in the New sack until then. Counts still update. When the mouse leaves the sacks, everything catches up at once.
+
+## Pins
+
+Hold Ctrl and every item shows a pin in its corner: click it to pin the item (again to unpin). A pinned item goes first in its sack, in the order you pinned them, and keeps its place even when you have none: its cell stays, dark, like an empty action bar slot, until you have it again or unpin it. Pinned items show their pin all the time. The sack's Order page pins and reorders them too.
+
+## In combat
+
+The sacks work in combat like any other time: a used-up item leaves at once, a looted one lands in its sack, counts update, and you can move, dock and cut sacks. The one exception is a sack whose items left click uses: its use layer is secure, and the game freezes secure things (and whatever is docked with them) until combat ends, like an action bar. Its left click names the item, like an action bar: when a stack runs out, the slot stays where it is and goes on using your other stacks of that item, showing how many you have left, and goes dark at none. A new item shows in the sack's next empty cell, where right click uses it at once; when combat ends the sack is rebuilt once.
 
 ## Rules
 

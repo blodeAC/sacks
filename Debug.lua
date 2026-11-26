@@ -66,7 +66,7 @@ local function RecordCounts(event, ...)
                 local info = Safe(function() return C_Container.GetContainerItemInfo(button.bag, button.slot).stackCount end)
                 local id = Safe(function() return C_Container.GetContainerItemID(button.bag, button.slot) end)
                 local total = Safe(function(item) return (C_Item and C_Item.GetItemCount or GetItemCount)(item) end, tonumber(id) or 0)
-                local shown = button.count:GetText() or ""
+                local shown = button.Count and button.Count:IsShown() and button.Count:GetText() or ""
                 if shown == "" then shown = "1" end
                 if shown ~= info then
                     seen = seen + 1

@@ -231,25 +231,31 @@ local function PlaceTitle(group, frame, geom, items, free, special)
     state.stale[group] = nil
 end
 
--- Fills one slot with its item: the art, the count, the quest marker, and where the item really is.
+-- Fills one slot with its item: points the game's slot button at the item's bag slot (it draws itself from there),
+-- and adds where the item really is.
 local function FillSlot(button, item, group, size)
-    button:SetSize(size, size)
-    button.bag, button.slot, button.itemID, button.quality = item.bag, item.slot, item.itemID, item.quality
-    button:SetAttribute("item", item.bag .. " " .. item.slot)
-    -- A sack can use its items on left click, like an action bar. Dragging still picks an item up.
-    button.clickUse = group.useOnClick and true or false
-    if not (InCombatLockdown and InCombatLockdown()) then
-        button:SetAttribute("type1", button.clickUse and "item" or nil)
+    ns.SizeSlot(button, size)
+    button:SetFrameLevel(button.sack:GetFrameLevel() + 2)
+    button.group = group
+    if item.placeholder then
+        -- a pinned item you have none of: its cell stays, dark (see Placeholder); the cover keeps clicks off the slot
+        button.bag, button.slot, button.itemID, button.quality = nil, nil, item.itemID, item.quality
+        button.placeholder, button.gone = true, false
+        ns.DrawPlaceholder(button, item)
+        button.clickUse = group.useOnClick and true or false
+        ns.SetUseLayer(button, button.clickUse)
+        button.where = nil
+        button.mark:Hide()
+        return
     end
-    button.icon:SetTexture(item.icon)
-    QuestMarker(button.quest, item)
-    button.icon:SetDesaturated(item.locked and true or false) -- locked: on the cursor, in a trade, on a letter
-    ns.ShowJunk(button, item)
+    button.placeholder = nil
+    button.bag, button.slot, button.itemID, button.quality = item.bag, item.slot, item.itemID, item.quality
     button.gone = false
     button.dead:Hide()
-    ns.ApplyTargetDim(button)
-    TintByQuality(button.back, item.quality)
-    button.count:SetText((item.count or 1) > 1 and item.count or "")
+    ns.DrawSlot(button)
+    -- A sack can use its items on left click, like an action bar. Dragging still picks an item up.
+    button.clickUse = group.useOnClick and true or false
+    ns.SetUseLayer(button, button.clickUse)
     if item.inSpecial then
         button.where, button.whereColor = "In your " .. item.bagName .. " (special bag).", COLOR.GREEN
         button.mark:SetColorTexture(0.2, 1, 0.2, 1)
@@ -328,21 +334,50 @@ local function FillGroup(group, items, free, special)
     local geom = SackGeometry(group, #items)
     frame:SetSize(geom.width, geom.height)
     frame.geom = geom
-    for _, ghost in ipairs(rawget(frame, "ghosts") or {}) do ghost:Hide() end -- a full rebuild has real slots for them
+    -- A button moved here or elsewhere in this same rebuild has this rebuild's mark (claimGen); the rest go back to
+    -- the pool. A slot's button is the same button wherever its slot shows (see SlotButton in Slots.lua).
+    local generation = state.generation
+    for _, ghost in ipairs(rawget(frame, "ghosts") or {}) do
+        if ghost.claimGen ~= generation then ns.ParkSlot(ghost) end -- a full rebuild has real slots for them
+    end
+    frame.ghosts = {}
     PlaceTitle(group, frame, geom, items, free, special)
 
+    local old = frame.buttons
+    frame.buttons = {}
+    frame.placeholders = rawget(frame, "placeholders") or {}
+    local placeholders = 0
     for index, item in ipairs(items) do
-        local button = frame.buttons[index] or MakeSlotButton(frame)
+        local button
+        if not item.placeholder then
+            button = ns.SlotButton(item.bag, item.slot)
+            -- in combat, a button still standing in a frozen sack stays there (see FrozenGroups)
+            local frozen = state.frozenNow
+            if button and frozen and button:IsShown() and button.sack ~= frame and frozen[button.group] then button = nil end
+        end
+        if button then
+            ns.MoveSlot(button, frame)
+        else
+            -- a pinned item you have none of, or (in combat) a slot with no button yet: a plain picture of it
+            placeholders = placeholders + 1
+            button = frame.placeholders[placeholders] or MakeSlotButton(frame)
+            frame.placeholders[placeholders] = button
+            if not item.placeholder then
+                item = { itemID = item.itemID, icon = item.icon, quality = item.quality, name = item.name, placeholder = true }
+            end
+        end
+        button.claimGen = generation
         frame.buttons[index] = button
         FillSlot(button, item, group, geom.size)
         PlaceInGrid(button, index + geom.shift, geom)
         button:Show()
-        UpdateCooldown(button)
     end
-    for index = #items + 1, #frame.buttons do
-        frame.buttons[index].bag = nil
-        frame.buttons[index].dead:Hide()
-        frame.buttons[index]:Hide()
+    for _, button in ipairs(old or {}) do
+        if button.claimGen ~= generation then ns.ParkSlot(button) end
+    end
+    for index = placeholders + 1, #frame.placeholders do
+        local button = frame.placeholders[index]
+        if button.claimGen ~= generation then ns.ParkSlot(button) end
     end
     KeepHoveredTooltip(frame)
     MarkClickSack(group, frame)
@@ -483,28 +518,36 @@ end
 -- In combat the slots cannot be moved or re-assigned, but their text can change. This re-reads the stack in each
 -- slot that is on screen, so a count goes down as you use the item instead of at the end of the fight. A slot that
 -- now holds a different item or nothing is dimmed and left where it is until the full refresh after combat.
+local GONE_SHADE = ns.GONE_SHADE
 local function RefreshCounts()
     for _, frame in pairs(state.frames or {}) do
         for _, button in ipairs(rawget(frame, "buttons") or {}) do
             if button.bag and button:IsShown() then
                 local ok, info = pcall(C_Container.GetContainerItemInfo, button.bag, button.slot)
-                local free = not (InCombatLockdown and InCombatLockdown())
                 if ok and type(info) == "table" and info.itemID == button.itemID then
-                    local stack = info.stackCount or 1
-                    button.count:SetText(stack > 1 and stack or "")
-                    button.icon:SetDesaturated(info.isLocked and true or false)
-                    if free and not button:GetAttribute("item") then button:SetAttribute("item", button.bag .. " " .. button.slot) end
                     button.gone = false
                     button.dead:Hide()
+                    ns.DrawSlot(button)
+                    ns.SetUseLayer(button, button.clickUse) -- out of combat only (it is secure)
                 else
-                    -- out of combat the slot also stops using what its bag slot holds now (in combat it can't be changed)
-                    if free and button:GetAttribute("item") then button:SetAttribute("item", nil) end
+                    -- The item left: the cover catches clicks until the slot is filled again (see MakeSlotButton). A slot
+                    -- whose left click uses its item goes on using it from your other stacks, like an action bar: it shows
+                    -- how many you have left, and goes dark at none.
+                    ns.SetUseLayer(button, false) -- out of combat; in combat the layer stays, pointed at the item
                     button.gone = true
                     button.dead:Show()
-                    button.count:SetText("")
-                    button.icon:SetDesaturated(true)
+                    local using = rawget(button, "use") and button.use:IsShown()
+                    local left = using and C_Item.GetItemCount(button.itemID) or 0
+                    if left > 0 then
+                        SetItemButtonCount(button, left)
+                        SetItemButtonDesaturated(button, false)
+                        SetItemButtonTextureVertexColor(button, 1, 1, 1)
+                    else
+                        SetItemButtonCount(button, nil)
+                        SetItemButtonDesaturated(button, true)
+                        SetItemButtonTextureVertexColor(button, GONE_SHADE, GONE_SHADE, GONE_SHADE)
+                    end
                 end
-                UpdateCooldown(button)
             end
         end
     end
@@ -546,21 +589,108 @@ local function NormalRanks(items)
     return ranks
 end
 
+-- A pinned item you have none of keeps its cell, like an action bar: drawn dark, at its pin's place.
+local function Placeholder(id, index)
+    local seen = SacksDB.seen and SacksDB.seen[id] or {}
+    local item = { itemID = id, placeholder = true, bag = 99, slot = index, count = 0 }
+    for key, value in pairs(seen) do item[key] = value end
+    item.name = item.name or ("item " .. id)
+    return item
+end
+
+-- Which sack each item goes to (the first whose lines take it; the last sack takes the rest), each sack's items in its
+-- order, and how many each has.
+local function Assign(items)
+    local groups = AllGroups()
+    local sorted = {}
+    local carried = {}
+    for _, group in ipairs(groups) do sorted[group] = {} end
+    for _, item in ipairs(items) do
+        if item.itemID then carried[item.itemID] = true end
+        for _, group in ipairs(groups) do
+            if (group.fixed or #group.rule > 0) and Matches(group.rule, item) then
+                table.insert(sorted[group], item)
+                break
+            end
+        end
+    end
+    for _, group in ipairs(groups) do
+        for index, id in ipairs(group.pins or {}) do
+            if not carried[id] then table.insert(sorted[group], Placeholder(id, index)) end
+        end
+    end
+    state.normalRank = nil -- the Normal sacks sort by their own steps while their order is worked out
+    state.normalRank = NormalRanks(items)
+    for _, group in ipairs(groups) do SortItems(group, sorted[group]) end
+    return groups, sorted
+end
+
+-- In combat with frozen sacks on screen (a sack whose items left click uses, and what is docked with it: see
+-- FrozenGroups): the other sacks are rebuilt as usual, where they are; a frozen one keeps its slots (a slot whose item
+-- left is covered, see RefreshCounts) and shows what it gains in its next cells (ShowGhosts). Nothing is moved, so the
+-- frozen ones are never touched; the full rebuild runs when combat ends.
+local function CombatRebuild(frozen)
+    local items, free, special = ReadBags()
+    state.items = items
+    local groups, sorted = Assign(items)
+    state.stale = {}
+    state.frozenNow = frozen -- FillGroup leaves the buttons in frozen sacks where they are
+    for _, group in ipairs(groups) do
+        local frame = state.frames[group]
+        if frozen[group] and frame then
+            local shown = {}
+            local removed = {}
+            for _, button in ipairs(rawget(frame, "buttons") or {}) do
+                if button.bag and button:IsShown() then
+                    if button.gone then
+                        local seen = SacksDB.seen and SacksDB.seen[button.itemID]
+                        removed[#removed + 1] = "- " .. tostring(seen and seen.name or button.itemID) .. " (used up or moved)"
+                    else
+                        shown[button.bag .. ":" .. button.slot .. ":" .. tostring(button.itemID)] = true
+                    end
+                end
+            end
+            local pending, lines = {}, {}
+            for _, item in ipairs(sorted[group]) do
+                if not item.placeholder and not shown[item.bag .. ":" .. item.slot .. ":" .. tostring(item.itemID)] then
+                    pending[#pending + 1] = item
+                    lines[#lines + 1] = "+ " .. tostring(item.name) .. (item.count and item.count > 1 and " x" .. item.count or "")
+                end
+            end
+            ns.ShowGhosts(group, frame, pending)
+            for _, line in ipairs(removed) do lines[#lines + 1] = line end
+            if #lines > 0 then state.stale[group] = lines end
+            if rawget(frame, "stale") then frame.stale:SetText(#removed > 0 and ("-" .. #removed) or "") end
+        else
+            state.counts[group] = #sorted[group]
+            FillGroup(group, sorted[group], free, special)
+        end
+    end
+    state.frozenNow = nil
+    state.placing = true -- nothing moves: the frozen sacks and what hangs from them stay where they are
+    UpdateWidget(free, special)
+    state.placing = false
+    RefreshFresh()
+    ns.UpdatePins()
+end
+
 local function Refresh()
     if not SacksDB then return end
     state.generation = (state.generation or 0) + 1 -- what was worked out from the bags before this is out of date
+    -- In combat the sacks are rebuilt like any other time, unless some are frozen (see FrozenGroups): then everything
+    -- else is, and the rest waits for the end of combat.
     if InCombatLockdown() then
-        state.pending = true -- secure buttons can't be changed in combat; redo it when combat ends
-        Guarded("combat counts", RefreshCounts) -- but what each slot shows can be brought up to date now
-        Guarded("combat items", function()
-            local items = ReadBags()
-            MarkStale(items) -- what it cannot show yet is drawn in New
-            RefreshFresh()
-        end)
-        if ns.RefreshSettings then Guarded("settings", ns.RefreshSettings) end
-        return
+        local frozen = ns.FrozenGroups()
+        if next(frozen) then
+            state.pending = true
+            Guarded("combat counts", RefreshCounts) -- what each frozen slot shows is brought up to date now
+            Guarded("combat rebuild", CombatRebuild, frozen)
+            if ns.RefreshSettings then Guarded("settings", ns.RefreshSettings) end
+            return
+        end
     end
     state.pending = false
+    ns.MakeAllSlotButtons()
     local items, free, special = ReadBags()
     state.items = items
     SacksDB.seen = SacksDB.seen or {}
@@ -573,24 +703,13 @@ local function Refresh()
         end
     end
     -- The last sack takes whatever no other sack wants, so every item in your bags is always on screen somewhere.
-    local groups = AllGroups()
-    local sorted = {}
-    for _, group in ipairs(groups) do sorted[group] = {} end
-    for _, item in ipairs(items) do
-        for _, group in ipairs(groups) do
-            if (group.fixed or #group.rule > 0) and Matches(group.rule, item) then
-                table.insert(sorted[group], item)
-                break
-            end
-        end
-    end
+    local groups, sorted = Assign(items)
     state.placed = 0
-    state.normalRank = nil -- the Normal sacks sort by their own steps while their order is worked out
-    state.normalRank = NormalRanks(items)
     for _, group in ipairs(groups) do
-        SortItems(group, sorted[group])
         state.counts[group] = #sorted[group]
-        state.placed = state.placed + #sorted[group]
+        for _, item in ipairs(sorted[group]) do
+            if not item.placeholder then state.placed = state.placed + 1 end
+        end
     end
     -- Town beside a window: every sack's width and spot, from what each holds, before the sacks are drawn at that width
     ns.PackTown(groups)
@@ -602,6 +721,7 @@ local function Refresh()
     state.placing = false
     ns.Settle() -- after the boxes too: a chain of sacks can hang from the gold box
     RefreshFresh()
+    ns.UpdatePins()
     if ns.RefreshSettings then Guarded("settings", ns.RefreshSettings) end
 end
 state.refresh = Refresh

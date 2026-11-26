@@ -91,6 +91,8 @@ ns.OnEvent("ITEM_LOCK_CHANGED", function(_, bag, slot) ns.UpdateLocked(bag, slot
 -- Something starts or stops waiting for an item target, or what it can take changes: grey or restore the slots.
 ns.OnEvent("CURRENT_SPELL_CAST_CHANGED", function() ns.UpdateTargetDim() end)
 ns.OnEvent("UPDATE_SPELL_TARGET_ITEM_CONTEXT", function() ns.UpdateTargetDim() end)
+ns.OnEvent("INVENTORY_SEARCH_UPDATE", function() ns.UpdateSearch() end) -- the game's bag search box
+ns.OnEvent("MODIFIER_STATE_CHANGED", function() ns.UpdatePins() end) -- Ctrl shows the pins to click
 
 ns.OnEvent("PLAYER_REGEN_ENABLED", function()
     if state.pending then ns.BagsChanged() end -- still held if the mouse is on a sack
@@ -105,7 +107,12 @@ ns.OnEvent("MERCHANT_SHOW", function() state.vendor = true; Refresh() end)
 local function SettleVendor()
     if not state.vendor then return end
     ns.KeepVendorLast()
-    if C_Timer and C_Timer.After then C_Timer.After(0, ns.KeepVendorLast) end
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0, function()
+            ns.KeepVendorLast()
+            ns.RecheckCover() -- a panel that came with the new window (an addon's) may now lie over the sacks
+        end)
+    end
 end
 ns.OnEvent("MERCHANT_SHOW", SettleVendor)
 if hooksecurefunc then

@@ -43,6 +43,115 @@ local function Overhang(window)
     return type(width) == "number" and width > 0 and math.min(widest, width) or widest
 end
 
+-- How far right of the window the sacks start: past what sticks out of it (Overhang), and past any other window lying
+-- over that spot, such as an addon's panel hung off the professions window (Blackthornes' craft queue). A window there is
+-- a frame on the screen, shown, taking the mouse, narrower than most of the screen, beside at least half the window's
+-- height (a window or panel; not a row of buff icons, the minimap or a lone button) and
+-- starting before the sacks would (or so close after that not one slot fits between); the sacks then start after it, and after whatever lies past that, and so on. Each such
+-- window is watched: when it hides or shows again, the sacks move back or out of its way. Frames the game keeps from
+-- addons (forbidden: some of its dialogs) are skipped, since even asking whether they are shown is an error.
+local watchedCovers = {}
+local function Recheck() if ns.RecheckCover then C_Timer.After(0, ns.RecheckCover) end end
+
+-- Watches a frame that can lie over the sacks: when it, or a part of it (a panel that opens out of it), shows, hides or
+-- changes size, the sacks are placed again.
+local function WatchCover(frame)
+    if watchedCovers[frame] or not frame.HookScript then return end
+    watchedCovers[frame] = true
+    frame:HookScript("OnShow", Recheck)
+    frame:HookScript("OnHide", Recheck)
+    frame:HookScript("OnSizeChanged", Recheck)
+    for _, child in ipairs({ frame:GetChildren() }) do
+        if type(child) == "table" and child.HookScript and not (child.IsForbidden and child:IsForbidden()) then
+            child:HookScript("OnShow", Recheck)
+            child:HookScript("OnHide", Recheck)
+        end
+    end
+end
+
+-- Addon panels known to open beside the professions window, watched from the start: they can show up later than the
+-- window itself (Blackthornes' craft queue does), when nothing else would place the sacks again.
+local KNOWN_COVERS = { "BlackthornesTSCraftPanel" }
+local function WatchKnownCovers()
+    for _, name in ipairs(KNOWN_COVERS) do
+        local frame = rawget(_G, name)
+        if type(frame) == "table" then WatchCover(frame) end
+    end
+end
+ns.OnEvent("ADDON_LOADED", WatchKnownCovers)
+ns.OnEvent("PLAYER_LOGIN", WatchKnownCovers)
+
+-- How far right a frame reaches, with whatever of it is shown sticking out past its own edge (a second panel that opens
+-- beside it, as Blackthornes' queued crafts do), in this scale.
+local function Reach(frame, scale)
+    local widest = 0
+    local function scan(each, depth)
+        local measured, edge = pcall(each.GetRight, each) -- the game refuses to measure some frames (the ping pin)
+        if not measured then edge = nil end
+        local own = each:GetEffectiveScale()
+        if type(edge) == "number" and type(own) == "number" then widest = math.max(widest, edge * own / scale) end
+        if depth < 3 then
+            for _, child in ipairs({ each:GetChildren() }) do
+                if type(child) == "table" and not (child.IsForbidden and child:IsForbidden()) and child.IsShown
+                    and child:IsShown() and child.GetRight then
+                    scan(child, depth + 1)
+                end
+            end
+        end
+    end
+    scan(frame, 1)
+    return widest
+end
+
+local function Rect(frame) return frame:GetLeft(), frame:GetRight(), frame:GetTop(), frame:GetBottom() end
+
+local function TakesMouse(frame)
+    if frame.IsMouseEnabled and frame:IsMouseEnabled() then return true end
+    for _, child in ipairs({ frame:GetChildren() }) do
+        if type(child) == "table" and not (child.IsForbidden and child:IsForbidden()) and child.IsMouseEnabled and child:IsMouseEnabled() then return true end
+    end
+    return false
+end
+
+local function Covering(window)
+    local overhang = Overhang(window)
+    local right, top, bottom = window:GetRight(), window:GetTop(), window:GetBottom()
+    local scale = window.GetEffectiveScale and window:GetEffectiveScale()
+    if type(right) ~= "number" or type(top) ~= "number" or type(bottom) ~= "number" or type(scale) ~= "number" or scale == 0 then
+        return overhang
+    end
+    local screen = (UIParent:GetWidth() or 0) * UIParent:GetEffectiveScale() / scale
+    local ours = {}
+    for _, frame in pairs(state.frames or {}) do ours[frame] = true end
+    -- a gap too narrow for even one slot of a sack counts as covered too
+    local gap = ns.SlotSize() + 2 * PADDING
+    local reach, moved, rounds = right + overhang, true, 0
+    while moved and rounds < 10 do
+        moved, rounds = false, rounds + 1
+        for _, child in ipairs({ UIParent:GetChildren() }) do
+            if type(child) == "table" and child ~= window and not ours[child] and not (child.IsForbidden and child:IsForbidden()) and child.IsVisible and child:IsVisible()
+                and child.GetLeft then
+                local childScale = child:GetEffectiveScale()
+                local measured, left, edge, childTop, childBottom = pcall(Rect, child) -- some frames can not be measured
+                if not measured then left = nil end
+                if type(left) == "number" and type(edge) == "number" and type(childTop) == "number"
+                    and type(childBottom) == "number" and type(childScale) == "number" then
+                    local k = childScale / scale
+                    left, edge, childTop, childBottom = left * k, edge * k, childTop * k, childBottom * k
+                    local wide = edge - left
+                    local overlap = math.min(childTop, top) - math.max(childBottom, bottom)
+                    if wide > 0 and wide < screen * 0.6 and overlap >= (top - bottom) / 2
+                        and left < reach + gap and edge > reach and TakesMouse(child) then
+                        reach, moved = math.max(edge, Reach(child, scale)), true
+                        WatchCover(child)
+                    end
+                end
+            end
+        end
+    end
+    return reach - right
+end
+
 -- Where each of the nine anchor points sits on a frame, as a fraction of its width (x) and height (y, from the bottom).
 local POINT_FRACTION = {
     TOPLEFT = { x = 0, y = 1 }, TOP = { x = 0.5, y = 1 }, TOPRIGHT = { x = 1, y = 1 },
@@ -192,13 +301,53 @@ local function DockOf(group, frame)
     return found, (#touches > 0 and touches or nil)
 end
 
+-- In combat the game freezes anything secure, and everything attached to it: a sack whose items left click uses has a
+-- secure "use item" layer on its slots (Slots.lua), so it, and every sack docked to it or it to them, can't be moved,
+-- resized or refilled until combat ends. The rest are the game's plain bag buttons and stay live. Out of combat, none.
+local function HasSecure(frame)
+    if frame.IsProtected and frame:IsProtected() then return true end
+    for _, child in ipairs({ frame:GetChildren() }) do
+        if type(child) == "table" and rawget(child, "isUseLayer") then return true end -- a "use item" layer (Slots.lua)
+    end
+    return false
+end
+
+local function ChainRoot(group)
+    local walk, steps = group, 0
+    while walk and walk.dock and steps < 20 do
+        local up = FindDockable(walk.dock.to)
+        if not up then break end
+        walk, steps = up, steps + 1
+    end
+    return walk
+end
+
+local function FrozenGroups()
+    local frozen = {}
+    if not InCombatLockdown() then return frozen end
+    local roots = {}
+    for group, frame in pairs(state.frames) do
+        if HasSecure(frame) then roots[ChainRoot(group)] = true end
+    end
+    for group in pairs(state.frames) do
+        if roots[ChainRoot(group)] then frozen[group] = true end
+    end
+    return frozen
+end
+ns.FrozenGroups = FrozenGroups
+
 function BeginSackDrag(frame)
-    -- The game does not let a frame be moved in combat while item buttons are attached to it, and raises its
-    -- "blocked from an action" popup if you try. A sack with no item buttons (New) can still be moved.
-    if InCombatLockdown and InCombatLockdown() and #(rawget(frame, "buttons") or {}) > 0 then
-        frame.noDrag = true
-        ns.Say("sacks with items in them can't be moved in combat (the game doesn't allow it)")
-        return
+    -- The game does not let a frozen sack be moved in combat (see FrozenGroups), and raises its "blocked from an
+    -- action" popup if you try.
+    if InCombatLockdown() then
+        local frozen = FrozenGroups()
+        for group, each in pairs(state.frames) do
+            if each == frame and frozen[group] then
+                frame.noDrag = true
+                ns.Say("a sack whose items left click uses, and what is docked with it, can't be moved in combat (the game doesn't allow it)")
+                return
+            end
+        end
     end
     local scale = frame:GetEffectiveScale()
     local cx, cy = GetCursorPosition()
@@ -692,7 +841,8 @@ local function PlaceGroups()
     for _, group in ipairs(groups) do state.frames[group]:ClearAllPoints() end
     local vendor = DockFrame()
     local limit = vendor and tonumber(vendor:GetHeight()) or 0
-    local overhang = vendor and Overhang(vendor) or 0
+    local overhang = vendor and Covering(vendor) or 0
+    state.coverUsed = overhang
     local placed = {}
     -- Finds the spot for a box of this size: as far left as it fits, and as high as it fits there. Candidate spots are
     -- the top corner, below each placed box, and beside each placed box, so a box slips into the gap beside narrow ones.
@@ -905,6 +1055,13 @@ end
 -- screen. Packs the windows the other way round: the others slide left into the vendor's place, in the order they were in,
 -- and the vendor goes after them, so the sacks beside it always have room. The game lays the windows out again whenever
 -- one opens or closes; this runs again then.
+-- The sacks beside a window move again when what lies over their spot changes (see Covering).
+function ns.RecheckCover()
+    local window = DockFrame()
+    if not window or InCombatLockdown() then return end
+    if math.abs(Covering(window) - (state.coverUsed or 0)) > 0.5 then ns.Refresh() end
+end
+
 local function KeepVendorLast()
     local vendor = MerchantFrame
     if not (state.vendor and vendor and vendor.IsShown and vendor:IsShown()) then return end

@@ -35,15 +35,22 @@ end
 -- Put a slot (or a combat ghost) in the cell with this number. geom is the sack's measurements: width, height, size,
 -- layout, topSpace, bottomSpace, and whether the first cell is at the right or bottom. The first cell is next to the
 -- corner the sack grows from. A docked sack lists the cells in reading order (geom.reading).
-local function PlaceInGrid(target, index, geom)
+local function PlaceInGrid(target, index, geom, relative)
     if geom.reading then index = geom.reading[index] end
     local column, row = GridCell(index, geom.layout)
     local x = column * (geom.size + SLOT_GAP)
     local y = row * (geom.size + SLOT_GAP)
     x = geom.fromRight and (geom.width - PADDING - geom.size - x) or (PADDING + x)
     y = geom.fromBottom and (geom.height - geom.bottomSpace - geom.size - y) or (geom.topSpace + y)
+    -- a slot is the game's button scaled to the sack's size; its offsets count in its own scale
+    local scale = target:GetScale()
+    if not scale or scale <= 0 then scale = 1 end
     target:ClearAllPoints()
-    target:SetPoint("TOPLEFT", x, -y)
+    if relative then
+        target:SetPoint("TOPLEFT", relative, "TOPLEFT", x / scale, -y / scale) -- a button not inside the sack (see ShowGhosts)
+    else
+        target:SetPoint("TOPLEFT", x / scale, -y / scale)
+    end
 end
 
 -- At a vendor or the bank every sack is laid out like a page, from the top left, across then down. The cells keep the

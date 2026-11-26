@@ -5,53 +5,19 @@ local GridDimensions, GridSize, Matches, PADDING = ns.GridDimensions, ns.GridSiz
 local PlaceInGrid, QuestMarker, ReadBags, TintByQuality = ns.PlaceInGrid, ns.QuestMarker, ns.ReadBags, ns.TintByQuality
 local state = ns.state
 
--- In combat, or while the sacks hold still under the mouse, a new item has no slot to go in (in combat the secure slots
--- cannot be added or moved; while held, nothing may move). It is drawn here as a plain,
--- non-secure icon in the next cell of its sack's grid, where its slot will be after combat. The cells go on in the
--- direction the sack grows, so nothing already on screen has to move; the free-slots box (a plain frame) steps aside.
+-- While the sacks hold still under the mouse (nothing may move), or in combat in a sack that is frozen (see
+-- FrozenGroups in Placement.lua), a new item has no slot of its own yet. It gets one of the game's bag buttons in the next
+-- cell of its sack's grid, where its slot will be: nothing already on screen moves, and right click uses it at once. The
+-- cells go on in the direction the sack grows; the free-slots box (a plain frame) steps aside.
 local function MakeGhost(frame)
-    local ghost = CreateFrame("Frame", nil, frame)
-    ghost:EnableMouse(true)
-    ghost.back = ghost:CreateTexture(nil, "BACKGROUND")
-    ghost.back:SetAllPoints()
-    ghost.icon = ghost:CreateTexture(nil, "ARTWORK")
-    ghost.icon:SetPoint("TOPLEFT", 2, -2)
-    ghost.icon:SetPoint("BOTTOMRIGHT", -2, 2)
-    ghost.quest = ghost:CreateTexture(nil, "OVERLAY")
-    ghost.quest:SetAllPoints()
-    ghost.quest:Hide()
-    ghost.over = CreateFrame("Frame", nil, ghost)
-    ghost.over:SetAllPoints()
-    ghost.over:SetFrameLevel(ghost:GetFrameLevel() + 2)
-    ghost.count = ghost.over:CreateFontString(nil, "OVERLAY", "NumberFontNormal")
-    ghost.count:SetPoint("BOTTOMRIGHT", -3, 3)
-    AddFreshGlow(ghost, ghost.over, ghost.icon)
-    ghost:SetScript("OnEnter", function(self)
-        if not self.bag then return end
-        if ns.IsFresh(self.bag, self.slot) then
-            ns.ClearFresh(self.bag, self.slot)
-            ns.RefreshFresh()
-        end
-        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-        GameTooltip:SetBagItem(self.bag, self.slot)
-        GameTooltip:AddLine(" ")
-        local why = (InCombatLockdown and InCombatLockdown()) and "Arrived during combat: it can be used once combat ends."
-            or "New: it goes to its sack, and can be used, once the mouse leaves the sacks."
-        GameTooltip:AddLine(why, COLOR.GREY[1], COLOR.GREY[2], COLOR.GREY[3], true)
-        GameTooltip:Show()
-    end)
-    ghost:SetScript("OnLeave", function()
-        GameTooltip:Hide()
-        ns.LetGo()
-    end)
-    ghost:HookScript("OnEnter", function() ns.HoldStill() end)
-    return ghost
+    return ns.MakeSlotButton(frame)
 end
 
 local function ShowGhosts(group, frame, pending)
     local geom = rawget(frame, "geom")
     frame.ghosts = rawget(frame, "ghosts") or {}
-    for _, ghost in ipairs(frame.ghosts) do ghost:Hide() end
+    for _, ghost in ipairs(frame.ghosts) do ns.ParkSlot(ghost) end -- pending items show nowhere else
+    frame.ghosts = {}
     if not geom or geom.reading then return end -- docked at a vendor or bank: the title marker says it
     local size = geom.size
     if group.builtin then
@@ -64,17 +30,46 @@ local function ShowGhosts(group, frame, pending)
         if ok and text and geom.layout.title ~= "NONE" then frame.title:SetText(text) end
         if #pending > 0 then frame:Show() elseif not group.always then frame:Hide() end
     end
-    for index, item in ipairs(pending) do
-        local ghost = frame.ghosts[index] or MakeGhost(frame)
-        frame.ghosts[index] = ghost
-        ghost:SetSize(size, size)
-        ghost.bag, ghost.slot, ghost.itemID, ghost.quality = item.bag, item.slot, item.itemID, item.quality
-        ghost.icon:SetTexture(item.icon)
-        QuestMarker(ghost.quest, item)
-        TintByQuality(ghost.back, item.quality)
-        ghost.count:SetText((item.count or 1) > 1 and item.count or "")
-        PlaceInGrid(ghost, geom.shift + geom.count + index, geom)
-        ghost:Show()
+    local why = InCombatLockdown() and "Arrived during combat: it takes its place in the sack (and left click uses it, in a sack set to) once combat ends."
+        or "New: it takes its place in its sack once the mouse leaves the sacks."
+    -- The new item's own slot button (see SlotButton in Slots.lua). In combat it stays where it is (the frozen sack
+    -- can't take it in) and is only pinned over the sack's next cell; otherwise it moves into the sack.
+    local shown, pictures = 0, 0
+    frame.ghostPictures = rawget(frame, "ghostPictures") or {}
+    for _, picture in ipairs(frame.ghostPictures) do picture:Hide() end
+    for _, item in ipairs(pending) do
+        local ghost = ns.SlotButton(item.bag, item.slot)
+        if ghost and ghost:IsShown() and ghost.sack ~= ns.SlotPool and ghost.sack ~= frame then
+            -- its slot's button still stands in another sack, covering what left that slot (it can't be in two places):
+            -- a picture of the item, covered, until the sacks catch up
+            pictures = pictures + 1
+            local picture = frame.ghostPictures[pictures] or ns.MakeSlotButton(frame)
+            frame.ghostPictures[pictures] = picture
+            shown = shown + 1
+            ns.SizeSlot(picture, size)
+            picture:SetFrameLevel(frame:GetFrameLevel() + 2)
+            picture.itemID, picture.group = item.itemID, group
+            ns.DrawPlaceholder(picture, item)
+            picture.placeholder = true
+            PlaceInGrid(picture, geom.shift + geom.count + shown, geom)
+            picture:Show()
+        elseif ghost then
+            shown = shown + 1
+            frame.ghosts[shown] = ghost
+            local inside = not InCombatLockdown()
+            if inside then ns.MoveSlot(ghost, frame) end
+            ns.SizeSlot(ghost, size)
+            ghost:SetFrameStrata(frame:GetFrameStrata())
+            ghost:SetFrameLevel(frame:GetFrameLevel() + 2)
+            ghost.claimGen = state.generation
+            ghost.bag, ghost.slot, ghost.itemID, ghost.quality = item.bag, item.slot, item.itemID, item.quality
+            ghost.placeholder, ghost.gone, ghost.group = nil, false, group
+            ghost.dead:Hide()
+            ns.DrawSlot(ghost)
+            ghost.where, ghost.whereColor = why, COLOR.GREY
+            PlaceInGrid(ghost, geom.shift + geom.count + shown, geom, not inside and frame or nil)
+            ghost:Show()
+        end
     end
     if geom.blankMode == "LAST" then PlaceInGrid(frame.blank, geom.count + #pending + 1, geom) end
 end
@@ -132,6 +127,7 @@ local function MarkStale(items)
     end
 end
 ns.MarkStale = MarkStale
+ns.ShowGhosts = ShowGhosts
 
 ---------------------------------------------------------------------------------------------------
 -- New items
